@@ -136,8 +136,40 @@ int main(int argc, char *argv[]) {
     // Limpiamos el tablero 
     memset(state->board, 0, board_bytes);
 
-    // ### INICIALIZACIÓN DE SEMÁFOROS ### // 
+    // ### INICIALIZACIÓN DE SEMÁFOROS ### //
 
+    // Master <-> Vista
+    if (sem_init(&sync->canPrint, 1, 0) == -1) {
+        perror("Error en sem_init de canPrint");
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(&sync->completedPrint, 1, 0) == -1) {
+        perror("Error en sem_init de completedPrint");
+        exit(EXIT_FAILURE);
+    }
+
+    // Master <-> Jugadores (Lectores-Escritores)
+    if (sem_init(&sync->mutexWriter, 1, 1) == -1) {
+        perror("Error en sem_init de mutexWriter");
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(&sync->mutexStatus, 1, 1) == -1) {
+        perror("Error en sem_init de mutexStatus");
+        exit(EXIT_FAILURE);
+    }
+    if (sem_init(&sync->mutexReaders, 1, 1) == -1) {
+        perror("Error en sem_init de mutexReaders");
+        exit(EXIT_FAILURE);
+    }
+    sync->playersReading = 0;
+
+    // Control de flujo individual por jugador
+    for (int i = 0; i < num_players; i++) {
+        if (sem_init(&sync->allowed_Mov[i], 1, 1) == -1) {
+            perror("Error en sem_init de allowed_Mov");
+            exit(EXIT_FAILURE);
+        }
+    }
 
     // ### CREACIÓN DE PIPES ### // 
 
