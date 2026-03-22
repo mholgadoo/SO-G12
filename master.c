@@ -171,8 +171,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // ### CREACIÓN DE PIPES ### // 
+    // ### CREACIÓN DE PIPES ### //
 
+    int pipes[9][2]; // pipes[i][0] = lectura (master), pipes[i][1] = escritura (jugador)
+    for (int i = 0; i < num_players; i++) {
+        if (pipe(pipes[i]) == -1) {
+            perror("Error creando pipe");
+            exit(EXIT_FAILURE);
+        }
+    }
 
     // ### CREACIÓN DE PROCESOS HIJOS ### // 
 
