@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <time.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -182,6 +183,71 @@ int main(int argc, char *argv[]) {
     }
 
     // ### CREACIÓN DE PROCESOS HIJOS ### // 
+    if (view_path != NULL) {
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("Error creando proceso vista");
+            exit(EXIT_FAILURE);
+        }
+        // Proceso hijo: como la vista no es un jugador, no necesitamos los pipes -> los cerramos
+        if (pid == 0) {
+            for (int i = 0; i < num_players; i++) {
+                close(pipes[i][0]);
+                close(pipes[i][1]);
+            }
+
+            // En execv armamos manualmente el argv del nuevo programa.
+            // char *args[] = { arg0, arg1, arg2, NULL };
+            // execv(ruta, args);
+            // "ruta" es el ejecutable a cargar.
+            // args[0] pasa a ser argv[0] del nuevo programa.
+            // El NULL final marca dónde termina el arreglo de argumentos.
+            char *view_argv[] = { view_path, NULL };
+            execv(view_path, view_argv);
+
+            perror("Error ejecutando vista");
+            _exit(EXIT_FAILURE);
+        }
+        // Proceso padre: sigue la ejecucion de master
+    }
+
+    // ### CREACIÓN DE PROCESOS HIJOS JUGADORES ### // 
+    for (int i = 0; i < num_players; i++) {
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("Error creando proceso jugador");
+            exit(EXIT_FAILURE);
+        }
+
+        if (pid == 0) {
+            char index_str[12];
+            char fd_str[12];
+            // Cerramos los pipes que no son del jugador actual
+            for (int j = 0; j < num_players; j++) {
+                // Cerramos todos los extremos de lectura porque un jugador no lee de ningun pipe
+                close(pipes[j][0]);
+
+                if (j != i) {
+                    // cerramos el pipe de escritura de todos los otros jugadores
+                    close(pipes[j][1]);
+                }
+            }
+        //hasta aca dejamos al jugador con un solo FD util: pipes[i][1] (escritura)
+            
+        
+            //Esas dos lineas convierten enteros a texto, porque execv solo pasa strings en argv
+            snprintf(index_str, sizeof(index_str), "%d", i);
+            snprintf(fd_str, sizeof(fd_str), "%d", pipes[i][1]);
+
+            char *player_argv[] = { player_paths[i], index_str, fd_str, NULL };
+            execv(player_paths[i], player_argv);
+
+            perror("Error ejecutando jugador");
+            _exit(EXIT_FAILURE);
+        }
+
+        close(pipes[i][1]);
+    }
 
 
     // ### BUCLE PRINCIPAL DEL JUEGO ### // 

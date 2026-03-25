@@ -3,11 +3,8 @@
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
     (void)argv;
-
-    if (argc != 3) {
-        return 1;
-    }
 
     return 0;
 }
