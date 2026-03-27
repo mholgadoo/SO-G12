@@ -16,32 +16,32 @@ int main(int argc, char *argv[])
 
     int player_index = atoi(argv[1]);
     int pipe_fd = atoi(argv[2]);
-    //obtengo file descriptor de /game_state
+    // Obtengo file descriptor de /game_state
     int fd_state = shm_open("/game_state", O_RDWR, 0);
     if (fd_state == -1) {
         perror("Error abriendo /game_state");
         close(pipe_fd);
         return 1;
     }
-    //como GameState termina con board[], sizeof(GameState) es el tamano de la estructura GameState y me falta el tamano de board[]
-    //por lo tanto, state_info.st_size es el tamano de la estructura GameState + el tamano de board[]
+    // Como GameState termina con board[], sizeof(GameState) es el tamaño de la estructura GameState y me falta el tamaño de board[]
+    // por lo tanto, state_info.st_size es el tamaño de la estructura GameState + el tamaño de board[]
     struct stat state_info;
     if (fstat(fd_state, &state_info) == -1) {
-        perror("Error obteniendo tamano de /game_state");
+        perror("Error obteniendo tamaño de /game_state");
         close(fd_state);
         close(pipe_fd);
         return 1;
     }
 
     if (state_info.st_size < (off_t)sizeof(GameState)) {
-        fprintf(stderr, "Error: /game_state tiene un tamano invalido.\n");
+        fprintf(stderr, "Error: /game_state tiene un tamaño invalido.\n");
         close(fd_state);
         close(pipe_fd);
         return 1;
     }
-
+    // Guardo el tamaño real de la /game_state
     size_t state_size = (size_t)state_info.st_size;
-    //guardo el puntero a la memoria compartida en state
+    // Guardo el puntero a la memoria compartida en state
     GameState *state = mmap(NULL, state_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_state, 0);
     if (state == MAP_FAILED) {
         perror("Error mapeando /game_state");
@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
     }
     close(fd_state);
 
-    //obtengo file descriptor de /game_sync
+    // Obtengo file descriptor de /game_sync
     int fd_sync = shm_open("/game_sync", O_RDWR, 0);
     if (fd_sync == -1) {
         perror("Error abriendo /game_sync");
@@ -59,11 +59,11 @@ int main(int argc, char *argv[])
         close(pipe_fd);
         return 1;
     }
-    //como Sync termina con board[], sizeof(Sync) es el tamano de la estructura Sync y me falta el tamano de board[]
-    //por lo tanto, sync_size es el tamano de la estructura Sync + el tamano de board[]
+    // Como Sync termina con board[], sizeof(Sync) es el tamaño de la estructura Sync y me falta el tamaño de board[]
+    // por lo tanto, sync_size es el tamaño de la estructura Sync + el tamaño de board[]
     size_t sync_size = sizeof(Sync);
 
-    //guardo el puntero a la memoria compartida en sync
+    // Guardo el puntero a la memoria compartida en sync
     Sync *sync = mmap(NULL, sync_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_sync, 0);
     if (sync == MAP_FAILED) {
         perror("Error mapeando /game_sync");
@@ -82,7 +82,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Por ahora solo comprobamos que el jugador ya puede ver el estado compartido.
+    // Por ahora solo comprobamos que el jugador ya puede ver el estado compartido
+    // Guardamos un puntero al struct del jugador actual dentro de la memoria compartida
     Player *self = &state->players[player_index];
     (void)self;
     (void)sync;

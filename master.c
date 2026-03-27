@@ -182,7 +182,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // ### CREACIÓN DE PROCESOS HIJOS ### // 
+    // ### CREACIÓN DEL PROCESO HIJO VISTA ### // 
     if (view_path != NULL) {
         pid_t pid = fork();
         if (pid == -1) {
@@ -205,6 +205,7 @@ int main(int argc, char *argv[]) {
             char *view_argv[] = { view_path, NULL };
             execv(view_path, view_argv);
 
+            // Si llego aca, hubo un error en execv
             perror("Error ejecutando vista");
             _exit(EXIT_FAILURE);
         }
@@ -218,7 +219,7 @@ int main(int argc, char *argv[]) {
             perror("Error creando proceso jugador");
             exit(EXIT_FAILURE);
         }
-
+        // Proceso hijo: ejecuta el jugador
         if (pid == 0) {
             char index_str[12];
             char fd_str[12];
@@ -232,21 +233,22 @@ int main(int argc, char *argv[]) {
                     close(pipes[j][1]);
                 }
             }
-        //hasta aca dejamos al jugador con un solo FD util: pipes[i][1] (escritura)
+        // Hasta aca dejamos al jugador con un solo FD util: pipes[i][1] (escritura)
             
         
-            //Esas dos lineas convierten enteros a texto, porque execv solo pasa strings en argv
+            // Esas dos lineas convierten enteros a texto, porque execv solo pasa strings en argv
             snprintf(index_str, sizeof(index_str), "%d", i);
             snprintf(fd_str, sizeof(fd_str), "%d", pipes[i][1]);
 
             char *player_argv[] = { player_paths[i], index_str, fd_str, NULL };
             execv(player_paths[i], player_argv);
 
+            // Si llego aca, hubo un error en execv
             perror("Error ejecutando jugador");
             _exit(EXIT_FAILURE);
         }
-
-        close(pipes[i][1]);
+        // Proceso padre: sigue la ejecucion de master
+        close(pipes[i][1]); 
     }
 
 
