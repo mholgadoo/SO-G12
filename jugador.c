@@ -85,6 +85,7 @@ int main(int argc, char *argv[])
     while (true) {
         MoveRequest request;
 
+        // el jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
         if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
             perror("Error en sem_wait de allowed_Mov");
             munmap(sync, sync_size);
@@ -93,12 +94,15 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // si el master ya marco fin de juego, salimos sin mandar un movimiento extra
         if (state->finished) {
             break;
         }
 
+        // por ahora mandamos siempre derecha solo para probar
         request.direction = MOVE_RIGHT;
 
+        // write manda los bytes del struct por el pipe de este jugador hacia el master
         if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {
             perror("Error enviando movimiento");
             munmap(sync, sync_size);

@@ -196,7 +196,8 @@ int main(int argc, char *argv[]) {
 
     // Control de flujo individual por jugador
     for (int i = 0; i < num_players; i++) {
-        if (sem_init(&sync->allowed_Mov[i], 1, 1) == -1) {
+        // arranca en 0 porque ahora el master reparte los turnos del round robin
+        if (sem_init(&sync->allowed_Mov[i], 1, 0) == -1) {
             perror("Error en sem_init de allowed_Mov");
             exit(EXIT_FAILURE);
         }
@@ -284,32 +285,55 @@ int main(int argc, char *argv[]) {
 
 
     // ### BUCLE PRINCIPAL DEL JUEGO ### // 
-    for (int turn = 0; turn < 3; turn++) {
-        MoveRequest request;
-        ssize_t bytes_read = read(pipes[0][0], &request, sizeof(request));
+    const int test_rounds = 3;
+    bool stop_round_robin = false;
 
-        if (bytes_read == -1) {
-            perror("Error leyendo movimiento del jugador 0");
-            break;
-        } else if (bytes_read == 0) {
-            fprintf(stderr, "El jugador 0 cerro el pipe sin enviar movimiento.\n");
-            break;
-            //request: struct que contiene la direccion del movimiento
-        } else if (bytes_read != (ssize_t)sizeof(request)) {
-            fprintf(stderr, "Se recibio un movimiento incompleto del jugador 0.\n");
-            break;
-        } else {
-            printf("Turno %d: master recibio direccion %u del jugador 0\n",
-                   turn, request.direction);
-        }
+    // por ahora hacemos 3 rondas fijas, pero ya con el orden rotativo del round robin
+    for (int round = 0; round < test_rounds && !stop_round_robin; round++) {
+        for (int offset = 0; offset < num_players; offset++) {
+            int player_index = (round + offset) % num_players;
+            MoveRequest request;
 
-        if (turn < 2) {
-            sem_post(&sync->allowed_Mov[0]);
+            // con esta formula vamos rotando quien arranca primero en cada ronda
+            // ejemplo con 3 jugadores:
+            // ronda 0 -> 0, 1, 2
+            // ronda 1 -> 1, 2, 0
+            // ronda 2 -> 2, 0, 1
+            if (sem_post(&sync->allowed_Mov[player_index]) == -1) {
+                perror("Error habilitando movimiento del jugador");
+                stop_round_robin = true;
+                break;
+            }
+
+            // una vez habilitado ese jugador, esperamos especificamente su mensaje
+            ssize_t bytes_read = read(pipes[player_index][0], &request, sizeof(request));
+
+            if (bytes_read == -1) {
+                perror("Error leyendo movimiento del jugador");
+                stop_round_robin = true;
+                break;
+            } else if (bytes_read == 0) {
+                fprintf(stderr, "El jugador %d cerro el pipe sin enviar movimiento.\n", player_index);
+                stop_round_robin = true;
+                break;
+            } else if (bytes_read != (ssize_t)sizeof(request)) {
+                fprintf(stderr, "Se recibio un movimiento incompleto del jugador %d.\n", player_index);
+                stop_round_robin = true;
+                break;
+            } else {
+                // por ahora solo mostramos quien mando y que direccion llego
+                printf("Ronda %d, turno %d: jugador %d mando direccion %u\n",
+                       round, offset, player_index, request.direction);
+            }
         }
     }
 
+    // primero marcamos finished para que el jugador, cuando se despierte, salga del loop
     state->finished = true;
-    sem_post(&sync->allowed_Mov[0]);
+    // aca destrabamos a todos porque cada uno puede haber quedado esperando su proximo turno
+    for (int i = 0; i < num_players; i++) {
+        sem_post(&sync->allowed_Mov[i]);
+    }
 
     return 0;
 }
