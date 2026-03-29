@@ -136,6 +136,36 @@ int main(int argc, char *argv[]) {
     state->finished = false;
     // Limpiamos el tablero 
     memset(state->board, 0, board_bytes);
+    // Limpiamos el array de jugadores
+    memset(state->players, 0, sizeof(state->players));
+
+    // Inicializamos los jugadores
+    for (int i = 0; i < num_players; i++) {
+        Player *player = &state->players[i];
+        // Obtenemos el nombre del jugador
+        const char *base_name = strrchr(player_paths[i], '/');
+
+        if (base_name != NULL) {
+            // Si el nombre del jugador tiene una barra, lo ignoramos
+            base_name++;
+        } else {
+            base_name = player_paths[i];
+        }
+        // Guardamos el nombre del jugador
+        snprintf(player->name, sizeof(player->name), "%s", base_name);
+        // Inicializamos las variables del jugador
+        player->score = 0;
+        player->invalid_mov = 0;
+        player->valid_mov = 0;
+        // Inicializamos las coordenadas del jugador
+        /* ponemos en width y height porque el tablero va de 0 a width-1 y de 0 a height-1 entonces
+        *  esto significa que el jugador no tiene una posicion asignada todavia
+        */
+        player->x = (unsigned short)width;
+        player->y = (unsigned short)height;
+        player->pid = 0;
+        player->blocked = false;
+    }
 
     // ### INICIALIZACIÓN DE SEMÁFOROS ### //
 
@@ -248,11 +278,38 @@ int main(int argc, char *argv[]) {
             _exit(EXIT_FAILURE);
         }
         // Proceso padre: sigue la ejecucion de master
+        state->players[i].pid = pid;
         close(pipes[i][1]); 
     }
 
 
     // ### BUCLE PRINCIPAL DEL JUEGO ### // 
+    for (int turn = 0; turn < 3; turn++) {
+        MoveRequest request;
+        ssize_t bytes_read = read(pipes[0][0], &request, sizeof(request));
+
+        if (bytes_read == -1) {
+            perror("Error leyendo movimiento del jugador 0");
+            break;
+        } else if (bytes_read == 0) {
+            fprintf(stderr, "El jugador 0 cerro el pipe sin enviar movimiento.\n");
+            break;
+            //request: struct que contiene la direccion del movimiento
+        } else if (bytes_read != (ssize_t)sizeof(request)) {
+            fprintf(stderr, "Se recibio un movimiento incompleto del jugador 0.\n");
+            break;
+        } else {
+            printf("Turno %d: master recibio direccion %u del jugador 0\n",
+                   turn, request.direction);
+        }
+
+        if (turn < 2) {
+            sem_post(&sync->allowed_Mov[0]);
+        }
+    }
+
+    state->finished = true;
+    sem_post(&sync->allowed_Mov[0]);
 
     return 0;
 }

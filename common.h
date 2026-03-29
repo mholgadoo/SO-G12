@@ -3,7 +3,19 @@
 
 #include <semaphore.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
+
+typedef enum {
+    MOVE_DOWN = 0,
+    MOVE_LEFT = 1,
+    MOVE_UP = 2,
+    MOVE_RIGHT = 3
+} MoveDirection;
+
+typedef struct {
+    uint8_t direction;               // Dirección solicitada por el jugador
+} MoveRequest;
 
 typedef struct {
     char name[16];                    // Nombre del jugador

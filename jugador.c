@@ -82,11 +82,31 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Por ahora solo comprobamos que el jugador ya puede ver el estado compartido
-    // Guardamos un puntero al struct del jugador actual dentro de la memoria compartida
-    Player *self = &state->players[player_index];
-    (void)self;
-    (void)sync;
+    while (true) {
+        MoveRequest request;
+
+        if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
+            perror("Error en sem_wait de allowed_Mov");
+            munmap(sync, sync_size);
+            munmap(state, state_size);
+            close(pipe_fd);
+            return 1;
+        }
+
+        if (state->finished) {
+            break;
+        }
+
+        request.direction = MOVE_RIGHT;
+
+        if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {
+            perror("Error enviando movimiento");
+            munmap(sync, sync_size);
+            munmap(state, state_size);
+            close(pipe_fd);
+            return 1;
+        }
+    }
 
     munmap(sync, sync_size);
     munmap(state, state_size);
