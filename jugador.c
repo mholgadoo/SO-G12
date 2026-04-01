@@ -7,6 +7,113 @@
 
 #include "common.h"
 
+/*
+logica base de begin_read, sin los if de validacion:
+
+sem_wait(&sync->mutexWriter);
+sem_wait(&sync->mutexReaders);
+sync->playersReading++;
+
+if (sync->playersReading == 1) {
+    sem_wait(&sync->mutexStatus);
+}
+
+sem_post(&sync->mutexReaders);
+sem_post(&sync->mutexWriter);
+*/
+
+static int begin_read(Sync *sync)
+{
+    // 1. primero pasamos por mutexWriter
+    // esto hace de molinete: no deja que sigan entrando lectores para siempre
+    // si el master quiere escribir, con esto evitamos que se muera de hambre
+    if (sem_wait(&sync->mutexWriter) == -1) {
+        perror("Error en sem_wait de mutexWriter");
+        return -1;
+    }
+
+    // 2. ahora tomamos mutexReaders
+    // este protege solamente playersReading
+    // o sea: no protege el tablero, protege el contador de lectores
+    if (sem_wait(&sync->mutexReaders) == -1) {
+        perror("Error en sem_wait de mutexReaders");
+        sem_post(&sync->mutexWriter);
+        return -1;
+    }
+
+    // 3. nos anotamos como lector activo
+    sync->playersReading++;
+
+    // 4. si somos el primer lector, cerramos la puerta al escritor
+    if (sync->playersReading == 1) {
+        if (sem_wait(&sync->mutexStatus) == -1) {
+            perror("Error en sem_wait de mutexStatus");
+            sync->playersReading--;
+            sem_post(&sync->mutexReaders);
+            sem_post(&sync->mutexWriter);
+            return -1;
+        }
+    }
+
+    // 5. ya terminamos de tocar playersReading, soltamos mutexReaders
+    if (sem_post(&sync->mutexReaders) == -1) {
+        perror("Error en sem_post de mutexReaders");
+        return -1;
+    }
+
+    // 6. soltamos mutexWriter
+    if (sem_post(&sync->mutexWriter) == -1) {
+        perror("Error en sem_post de mutexWriter");
+        return -1;
+    }
+
+    // 7. desde aca ya podemos leer el estado compartido
+    return 0;
+}
+
+
+/*
+logica base de end_read, sin los if de validacion:
+
+sem_wait(&sync->mutexReaders);
+sync->playersReading--;
+
+if (sync->playersReading == 0) {
+    sem_post(&sync->mutexStatus);
+}
+
+sem_post(&sync->mutexReaders);
+*/
+static int end_read(Sync *sync)
+{
+    // 1. volvemos a tomar mutexReaders porque vamos a tocar playersReading
+    if (sem_wait(&sync->mutexReaders) == -1) {
+        perror("Error en sem_wait de mutexReaders");
+        return -1;
+    }
+
+    // 2. dejamos de contarnos como lector activo
+    sync->playersReading--;
+
+    // 3. si eramos el ultimo lector, reabrimos la puerta al escritor
+    if (sync->playersReading == 0) {
+        if (sem_post(&sync->mutexStatus) == -1) {
+            perror("Error en sem_post de mutexStatus");
+            sem_post(&sync->mutexReaders);
+            return -1;
+        }
+    }
+
+    // 4. ya terminamos con el contador, soltamos mutexReaders
+    if (sem_post(&sync->mutexReaders) == -1) {
+        perror("Error en sem_post de mutexReaders");
+        return -1;
+    }
+
+    return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
     if (argc != 3) {
@@ -84,6 +191,7 @@ int main(int argc, char *argv[])
 
     while (true) {
         MoveRequest request;
+        bool finished;
 
         // el jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
         if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
@@ -94,8 +202,27 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        // entramos como lector para mirar el estado sin pisarnos con el master
+        if (begin_read(sync) == -1) {
+            munmap(sync, sync_size);
+            munmap(state, state_size);
+            close(pipe_fd);
+            return 1;
+        }
+
+        // por ahora solo leemos finished, mas adelante aca vamos a mirar mas cosas
+        finished = state->finished;
+
+        // salimos del protocolo lector cuando terminamos de mirar el estado
+        if (end_read(sync) == -1) {
+            munmap(sync, sync_size);
+            munmap(state, state_size);
+            close(pipe_fd);
+            return 1;
+        }
+
         // si el master ya marco fin de juego, salimos sin mandar un movimiento extra
-        if (state->finished) {
+        if (finished) {
             break;
         }
 
