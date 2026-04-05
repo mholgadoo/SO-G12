@@ -196,7 +196,7 @@ int main(int argc, char *argv[]) {
 
     // Control de flujo individual por jugador
     for (int i = 0; i < num_players; i++) {
-        // arranca en 0 porque ahora el master reparte los turnos del round robin
+        // Arranca en 0 porque ahora el master reparte los turnos del round robin
         if (sem_init(&sync->allowed_Mov[i], 1, 0) == -1) {
             perror("Error en sem_init de allowed_Mov");
             exit(EXIT_FAILURE);

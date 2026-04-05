@@ -18,22 +18,22 @@ typedef struct {
 } MoveRequest;
 
 typedef struct {
-    char name[16];                    // Nombre del jugador
-    unsigned int score;               // Puntaje
-    unsigned int invalid_mov;         // Solicitudes de movimientos inválidas
-    unsigned int valid_mov;           // Solicitudes de movimientos válidas
-    unsigned short x, y;              // Coordenadas en el tablero
-    pid_t pid;                        // Identificador de proceso
-    bool blocked;                     // Si el jugador está bloqueado
+    char name[16];                   // Nombre del jugador
+    unsigned int score;              // Puntaje
+    unsigned int invalid_mov;        // Solicitudes de movimientos inválidas
+    unsigned int valid_mov;          // Solicitudes de movimientos válidas
+    unsigned short x, y;             // Coordenadas en el tablero
+    pid_t pid;                       // Identificador de proceso
+    bool blocked;                    // Si el jugador está bloqueado
 } Player;
 
 typedef struct {
-    unsigned short width;              // Ancho del tablero
-    unsigned short height;             // Alto del tablero
-    unsigned char numPlayers;          // Cantidad de jugadores
-    Player players[9];                 // Lista de jugadores
-    bool finished;                     // Si el juego se ha terminado
-    char board[];                      // Arreglo que representa el tablero
+    unsigned short width;             // Ancho del tablero
+    unsigned short height;            // Alto del tablero
+    unsigned char numPlayers;         // Cantidad de jugadores
+    Player players[9];                // Lista de jugadores
+    bool finished;                    // Si el juego se ha terminado
+    char board[];                     // Arreglo que representa el tablero
 } GameState;
 
 typedef struct {
@@ -42,10 +42,10 @@ typedef struct {
     // La sincronización entre el máster y la vista involucra los semáforos canPrint y completedPrint 
     // siguiendo un patrón simple de señalización bidireccional.
 
-    sem_t mutexWriter;               // Mutex: previene inanición del máster
-    sem_t mutexStatus;               // Mutex: protege el estado del juego
-    sem_t mutexReaders;              // Mutex: protege el contador de lectores
-    unsigned int playersReading;     // Cantidad de jugadores leyendo el estado
+    sem_t mutexWriter;                // Mutex: previene inanición del máster (molinete)
+    sem_t mutexStatus;                // Mutex: protege el estado del juego
+    sem_t mutexReaders;               // Mutex: protege el contador de lectores
+    unsigned int playersReading;      // Cantidad de jugadores leyendo el estado
     // La sincronización entre el máster y los jugadores involucra los
     // semáforos mutexWriter, mutexStatus y mutexReaders y la variable playersReading
 
