@@ -283,6 +283,21 @@ int main(int argc, char *argv[]) {
         close(pipes[i][1]); 
     }
 
+    // si hay vista, hacemos una primera "foto" del estado inicial
+    // la idea es: el master avisa que ya hay algo coherente para mostrar
+    // y despues espera hasta que la vista confirme que termino de imprimir
+    if (view_path != NULL) {
+        if (sem_post(&sync->canPrint) == -1) {
+            perror("Error avisando a la vista");
+            exit(EXIT_FAILURE);
+        }
+
+        if (sem_wait(&sync->completedPrint) == -1) {
+            perror("Error esperando a la vista");
+            exit(EXIT_FAILURE);
+        }
+    }
+
 
     // ### BUCLE PRINCIPAL DEL JUEGO ### // 
     const int test_rounds = 3;
@@ -330,6 +345,21 @@ int main(int argc, char *argv[]) {
 
     // primero marcamos finished para que el jugador, cuando se despierte, salga del loop
     state->finished = true;
+
+    // hacemos una ultima señal a la vista para que vea el estado final con finished = true
+    // de esa forma imprime una ultima vez y puede salir prolijamente de su loop
+    if (view_path != NULL) {
+        if (sem_post(&sync->canPrint) == -1) {
+            perror("Error avisando a la vista");
+            exit(EXIT_FAILURE);
+        }
+
+        if (sem_wait(&sync->completedPrint) == -1) {
+            perror("Error esperando a la vista");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     // aca destrabamos a todos porque cada uno puede haber quedado esperando su proximo turno
     for (int i = 0; i < num_players; i++) {
         sem_post(&sync->allowed_Mov[i]);
