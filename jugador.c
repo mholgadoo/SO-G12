@@ -4,8 +4,20 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-
+#include <string.h>
 #include "common.h"
+#include <time.h>
+
+// acá van los algoritmos
+
+static MoveDirection algoritmo_random(void) {
+    return (MoveDirection)(rand() % 4);
+}
+
+static MoveDirection algoritmo_fijo(int turno) {
+    MoveDirection secuencia[] = { MOVE_RIGHT, MOVE_RIGHT, MOVE_DOWN, MOVE_DOWN };
+    return secuencia[turno % 4];
+}
 
 /*
 logica base de begin_read, sin los if de validacion:
@@ -113,16 +125,20 @@ static int end_read(Sync *sync)
     return 0;
 }
 
-
 int main(int argc, char *argv[])
 {
-    if (argc != 3) {
+    if (argc != 4) {
         fprintf(stderr, "Uso: %s <indice_jugador> <pipe_fd>\n", argv[0]);
         return 1;
     }
 
     int player_index = atoi(argv[1]);
     int pipe_fd = atoi(argv[2]);
+    char *algoritmo  = argv[3];
+
+    int turno = 0; // Agregamos el contador de turnos
+    srand(time(NULL) ^ getpid()); // Semilla única por jugador usando su PID
+
     // Obtengo file descriptor de /game_state
     int fd_state = shm_open("/game_state", O_RDWR, 0);
     if (fd_state == -1) {
@@ -169,7 +185,7 @@ int main(int argc, char *argv[])
     // Como Sync termina con board[], sizeof(Sync) es el tamaño de la estructura Sync y me falta el tamaño de board[]
     // por lo tanto, sync_size es el tamaño de la estructura Sync + el tamaño de board[]
     size_t sync_size = sizeof(Sync);
-
+ 
     // Guardo el puntero a la memoria compartida en sync
     Sync *sync = mmap(NULL, sync_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_sync, 0);
     if (sync == MAP_FAILED) {
@@ -227,7 +243,16 @@ int main(int argc, char *argv[])
         }
 
         // por ahora mandamos siempre derecha solo para probar
-        request.direction = MOVE_RIGHT;
+        //request.direction = MOVE_RIGHT;
+        
+        // Usamos el algoritmo que le pasaron por parámetro al jugador
+        if (strcmp(algoritmo, "random") == 0) {
+            request.direction = algoritmo_random();
+        } else {
+            // Asumimos que si no es random, es "fijo"
+            request.direction = algoritmo_fijo(turno);
+        }
+        turno++; // Incrementamos el turno para el algoritmo fijo
 
         // write manda los bytes del struct por el pipe de este jugador hacia el master
         if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {

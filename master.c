@@ -5,8 +5,37 @@
 #include <time.h>
 #include <string.h>
 #include <sys/mman.h>
-
 #include "common.h" 
+
+static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, MoveDirection dir) {
+    Player *p = &state->players[player_index];
+    int new_x = (int)p->x;
+    int new_y = (int)p->y;
+
+    switch (dir) {
+        case MOVE_RIGHT: new_x++; break;
+        case MOVE_LEFT:  new_x--; break;
+        case MOVE_UP:    new_y--; break;
+        case MOVE_DOWN:  new_y++; break;
+    }
+
+    bool dentro = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
+    bool celda_libre = dentro && (state->board[new_y * state->width + new_x] == 0);
+
+    sem_wait(&sync->mutexStatus); // Bloqueamos escritura
+
+    if (dentro && celda_libre) {
+        state->board[p->y * state->width + p->x] = 0; // Vaciamos celda vieja
+        p->x = (unsigned short)new_x;
+        p->y = (unsigned short)new_y;
+        state->board[new_y * state->width + new_x] = (char)(player_index + 1); // Llenamos nueva
+        p->valid_mov++;
+    } else {
+        p->invalid_mov++;
+    }
+
+    sem_post(&sync->mutexStatus); // Liberamos escritura
+}
 
 int main(int argc, char *argv[]) {
     // ### RECEPCION Y PROCESAMIENTO DE PARÁMETROS ### // 
@@ -71,6 +100,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Solo para comprobar que todo cargo bien 
+    srand((unsigned int)seed); // <-- AGREGAR ESTO PARA QUE SEAN DISTINTAS PARTIDAS
     printf("Master iniciado con Tablero %dx%d, Delay: %d, Timeout: %d, Semilla: %d\n", 
            width, height, delay, timeout, seed);
     printf("Jugadores detectados: %d\n", num_players);
@@ -161,8 +191,21 @@ int main(int argc, char *argv[]) {
         /* ponemos en width y height porque el tablero va de 0 a width-1 y de 0 a height-1 entonces
         *  esto significa que el jugador no tiene una posicion asignada todavia
         */
-        player->x = (unsigned short)width;
-        player->y = (unsigned short)height;
+        //player->x = (unsigned short)width;
+        //player->y = (unsigned short)height;
+        
+        // Generamos posiciones aleatorias hasta encontrar una celda vacía (0)
+        unsigned short rand_x, rand_y;
+        do {
+            rand_x = (unsigned short)(rand() % width);
+            rand_y = (unsigned short)(rand() % height);
+        } while (state->board[rand_y * state->width + rand_x] != 0);
+
+        player->x = rand_x;
+        player->y = rand_y;
+        // Marcamos la celda como ocupada (1, 2 o 3...)
+        state->board[player->y * state->width + player->x] = (char)(i + 1);
+
         player->pid = 0;
         player->blocked = false;
     }
@@ -271,13 +314,20 @@ int main(int argc, char *argv[]) {
             snprintf(index_str, sizeof(index_str), "%d", i);
             snprintf(fd_str, sizeof(fd_str), "%d", pipes[i][1]);
 
-            char *player_argv[] = { player_paths[i], index_str, fd_str, NULL };
+            //char *player_argv[] = { player_paths[i], index_str, fd_str, NULL };
+            //execv(player_paths[i], player_argv);
+
+            // Alternamos: pares son random, impares son fijos
+            char *algo = (i % 2 == 0) ? "random" : "fijo"; 
+            
+            // Ahora sí pasamos el argumento "algo" al proceso jugador
+            char *player_argv[] = { player_paths[i], index_str, fd_str, algo, NULL };
             execv(player_paths[i], player_argv);
 
             // Si llego aca, hubo un error en execv
             perror("Error ejecutando jugador");
             _exit(EXIT_FAILURE);
-        }
+        } 
         // Proceso padre: sigue la ejecucion de master
         state->players[i].pid = pid;
         close(pipes[i][1]); 
@@ -337,8 +387,17 @@ int main(int argc, char *argv[]) {
                 break;
             } else {
                 // por ahora solo mostramos quien mando y que direccion llego
-                printf("Ronda %d, turno %d: jugador %d mando direccion %u\n",
-                       round, offset, player_index, request.direction);
+                //printf("Ronda %d, turno %d: jugador %d mando direccion %u\n",
+                //(round, offset, player_index, request.direction);
+
+                // Aplicamos el movimiento real en el tablero
+                aplicar_movimiento(state, sync, player_index, (MoveDirection)request.direction);
+
+                // Avisamos a la vista que el tablero cambió
+                if (view_path != NULL) {
+                    sem_post(&sync->canPrint);
+                    sem_wait(&sync->completedPrint);
+                }
             }
         }
     }
@@ -366,4 +425,4 @@ int main(int argc, char *argv[]) {
     }
 
     return 0;
-}
+}   

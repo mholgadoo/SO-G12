@@ -12,7 +12,7 @@ typedef enum {
     MOVE_UP = 2,
     MOVE_RIGHT = 3
 } MoveDirection;
-
+ 
 typedef struct {
     uint8_t direction;               // Dirección solicitada por el jugador
 } MoveRequest;

@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 
 #include "common.h"
-
+ 
 static void print_state(const GameState *state)
 {
     // esta funcion es solo para no mezclar toda la logica de impresion adentro del main
