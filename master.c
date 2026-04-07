@@ -20,11 +20,28 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
     }
 
     bool dentro = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
-    bool celda_libre = dentro && (state->board[new_y * state->width + new_x] == 0);
+    // Leemos qué hay en la celda destino
+    char cell_dest = 0;
+    if (dentro) {
+        cell_dest = state->board[new_y * state->width + new_x];
+    }
+    // Una celda es "pisable" si está libre (0) o si tiene una recompensa (no es un jugador del 1 al 9)
+    bool celda_libre = dentro && (cell_dest < 1 || cell_dest > 9);
 
     sem_wait(&sync->mutexStatus); // Bloqueamos escritura
 
+    // Si corresponde sumamos el puntaje de la recompensa 
     if (dentro && celda_libre) {
+        if (cell_dest != 0) {
+            switch(cell_dest) {
+                case '&': p->score += 1; break;
+                case '@': p->score += 3; break;
+                case '%': p->score += 5; break;
+                case '#': p->score += 7; break;
+                case '$': p->score += 9; break;
+            }
+        }
+
         state->board[p->y * state->width + p->x] = 0; // Vaciamos celda vieja
         p->x = (unsigned short)new_x;
         p->y = (unsigned short)new_y;
@@ -210,6 +227,24 @@ int main(int argc, char *argv[]) {
         player->blocked = false;
     }
 
+    // ### SEMBRADO DE RECOMPENSAS ### // 
+    char tipos_recompensas[] = {'&', '@', '%', '#', '$'};
+    int cantidad_por_tipo = 5; // Vamos a poner 5 de cada una (25 en total)
+
+    for (int r = 0; r < 5; r++) {
+        for (int k = 0; k < cantidad_por_tipo; k++) {
+            unsigned short rand_x, rand_y;
+            // Buscamos una celda que esté completamente vacía (0)
+            do {
+                rand_x = (unsigned short)(rand() % width);
+                rand_y = (unsigned short)(rand() % height);
+            } while (state->board[rand_y * state->width + rand_x] != 0);
+
+            // Plantamos la recompensa
+            state->board[rand_y * state->width + rand_x] = tipos_recompensas[r];
+        }
+    }
+
     // ### INICIALIZACIÓN DE SEMÁFOROS ### //
 
     // Master <-> Vista
@@ -318,10 +353,10 @@ int main(int argc, char *argv[]) {
             //execv(player_paths[i], player_argv);
 
             // Alternamos: pares son random, impares son fijos
-            char *algo = (i % 2 == 0) ? "random" : "fijo"; 
+            char *comportamiento = (i % 2 == 0) ? "random" : "fijo"; 
             
             // Ahora sí pasamos el argumento "algo" al proceso jugador
-            char *player_argv[] = { player_paths[i], index_str, fd_str, algo, NULL };
+            char *player_argv[] = { player_paths[i], index_str, fd_str, comportamiento, NULL };
             execv(player_paths[i], player_argv);
 
             // Si llego aca, hubo un error en execv
@@ -397,6 +432,11 @@ int main(int argc, char *argv[]) {
                 if (view_path != NULL) {
                     sem_post(&sync->canPrint);
                     sem_wait(&sync->completedPrint);
+
+                    // usleep frena el proceso en microsegundos. 
+                    // Como nuestro 'delay' está en milisegundos, lo multiplicamos por 5000.
+                    // Con esto logramos que el cambio quede visible en la vista antes de que llegue el próximo movimiento.
+                    usleep(delay * 5000);
                 }
             }
         }

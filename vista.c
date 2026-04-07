@@ -9,31 +9,44 @@
  
 static void print_state(const GameState *state)
 {
-    // esta funcion es solo para no mezclar toda la logica de impresion adentro del main
-    // asi el main queda con la idea general mas clara: conectar, esperar, imprimir, avisar, salir
-    printf("=== ESTADO DEL JUEGO ===\n");
+    printf("\033[H\033[J");
+    
+    printf("\n=== ESTADO DEL JUEGO ===\n");
     printf("Tablero: %hu x %hu\n", state->width, state->height);
     printf("Jugadores: %hhu\n", state->numPlayers);
     printf("Finalizado: %s\n", state->finished ? "si" : "no");
 
-    // recorremos solamente los jugadores reales, no las 9 posiciones completas del arreglo
     for (int i = 0; i < state->numPlayers; i++) {
         const Player *player = &state->players[i];
-
         printf("Jugador %d: %s | score=%u | valid=%u | invalid=%u | pos=(%hu,%hu) | blocked=%s | pid=%d\n",
-               i,
-               player->name,
-               player->score,
-               player->valid_mov,
-               player->invalid_mov,
-               player->x,
-               player->y,
-               player->blocked ? "si" : "no",
-               (int)player->pid);
+               i, player->name, player->score, player->valid_mov, player->invalid_mov,
+               player->x, player->y, player->blocked ? "si" : "no", (int)player->pid);
     }
 
-    printf("\n");
-    // hacemos fflush para que la salida salga ya mismo aunque haya varios procesos escribiendo
+    // DIBUJO DEL TABLERO //
+    printf("\n--- TABLERO ---\n");
+    
+    // Recorremos fila por fila (y)
+    for (int y = 0; y < state->height; y++) {
+        // Dentro de cada fila, recorremos columna por columna (x)
+        for (int x = 0; x < state->width; x++) {
+            
+            // Calculamos la posición exacta en el arreglo unidimensional
+            char cell_value = state->board[y * state->width + x];
+            
+            if (cell_value == 0) {
+                printf(" . "); // Celda vacía
+            } else if (cell_value >= 1 && cell_value <= 9) {
+                printf(" %d ", cell_value); // Es un jugador
+            } else {
+                printf(" %c ", cell_value); // Es una recompensa 
+            }
+        }
+        // Al terminar una fila entera, metemos un salto de línea
+        printf("\n");
+    }
+    printf("------------\n");
+
     fflush(stdout);
 }
 

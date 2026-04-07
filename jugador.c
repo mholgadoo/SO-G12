@@ -8,15 +8,20 @@
 #include "common.h"
 #include <time.h>
 
-// acá van los algoritmos
-
-static MoveDirection algoritmo_random(void) {
+// Comportamiento random 
+static MoveDirection random_behavior(void) {
     return (MoveDirection)(rand() % 4);
 }
 
-static MoveDirection algoritmo_fijo(int turno) {
+// Comportamiento fijo 
+static MoveDirection fixed_behavior(int turn) {
     MoveDirection secuencia[] = { MOVE_RIGHT, MOVE_RIGHT, MOVE_DOWN, MOVE_DOWN };
-    return secuencia[turno % 4];
+    return secuencia[turn % 4];
+}
+
+// Funcion util para el radar 
+static bool es_recompensa(char c) {
+    return (c == '&' || c == '@' || c == '%' || c == '#' || c == '$');
 }
 
 /*
@@ -134,9 +139,9 @@ int main(int argc, char *argv[])
 
     int player_index = atoi(argv[1]);
     int pipe_fd = atoi(argv[2]);
-    char *algoritmo  = argv[3];
+    char *behavior = argv[3];
 
-    int turno = 0; // Agregamos el contador de turnos
+    int turn = 0; // Agregamos el contador de turnos
     srand(time(NULL) ^ getpid()); // Semilla única por jugador usando su PID
 
     // Obtengo file descriptor de /game_state
@@ -208,6 +213,7 @@ int main(int argc, char *argv[])
     while (true) {
         MoveRequest request;
         bool finished;
+        int radar = -1;
 
         // el jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
         if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
@@ -226,8 +232,30 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // por ahora solo leemos finished, mas adelante aca vamos a mirar mas cosas
         finished = state->finished;
+
+        // Si el juego sigue, prendemos el radar
+        if (!finished) {
+            unsigned short mi_x = state->players[player_index].x;
+            unsigned short mi_y = state->players[player_index].y;
+            unsigned short w = state->width;
+            unsigned short h = state->height;
+
+            // RADAR: Miramos las 4 celdas adyacentes.
+            // OJO: Primero verificamos (mi_x + 1 < w) para no salirnos del tablero
+            if (mi_x + 1 < w && es_recompensa(state->board[mi_y * w + (mi_x + 1)])) {
+                radar = MOVE_RIGHT;
+            } 
+            else if (mi_x > 0 && es_recompensa(state->board[mi_y * w + (mi_x - 1)])) {
+                radar = MOVE_LEFT;
+            } 
+            else if (mi_y + 1 < h && es_recompensa(state->board[(mi_y + 1) * w + mi_x])) {
+                radar = MOVE_DOWN;
+            } 
+            else if (mi_y > 0 && es_recompensa(state->board[(mi_y - 1) * w + mi_x])) {
+                radar = MOVE_UP;
+            }
+        }
 
         // salimos del protocolo lector cuando terminamos de mirar el estado
         if (end_read(sync) == -1) {
@@ -245,14 +273,18 @@ int main(int argc, char *argv[])
         // por ahora mandamos siempre derecha solo para probar
         //request.direction = MOVE_RIGHT;
         
-        // Usamos el algoritmo que le pasaron por parámetro al jugador
-        if (strcmp(algoritmo, "random") == 0) {
-            request.direction = algoritmo_random();
+        // Analizamos si el radar detecto una recompensa 
+        if (radar != -1) {
+            request.direction = (MoveDirection)radar;
+        } // Sino usamos el comportamiento que le toco al jugador
+        else if (strcmp(behavior, "random") == 0) {
+            request.direction = random_behavior();
         } else {
             // Asumimos que si no es random, es "fijo"
-            request.direction = algoritmo_fijo(turno);
+            request.direction = fixed_behavior(turn);
         }
-        turno++; // Incrementamos el turno para el algoritmo fijo
+        
+        turn++; // Incrementamos el turno para el algoritmo fijo
 
         // write manda los bytes del struct por el pipe de este jugador hacia el master
         if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {

@@ -1,17 +1,16 @@
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -Wextra -g
 LDFLAGS = -lrt -lpthread
-#-lrt enlaza la librería de realtime/POSIX donde están APIs como shm_open y shm_unlink. Es necesario para usar shared memory.
-#-lpthread enlaza la librería de threads. Es necesario para usar threads.
+
 all: master vista jugador
 
-master: master.c
+master: master.c common.h
 	$(CC) $(CFLAGS) -o master master.c $(LDFLAGS)
 
-vista: vista.c
+vista: vista.c common.h
 	$(CC) $(CFLAGS) -o vista vista.c $(LDFLAGS)
 
-jugador: jugador.c
+jugador: jugador.c common.h
 	$(CC) $(CFLAGS) -o jugador jugador.c $(LDFLAGS)
 
 clean:
