@@ -120,6 +120,12 @@ int main(int argc, char *argv[])
         // cuando sem_wait destraba, significa que el master ya dejo un estado consistente para mirar
         print_state(state);
 
+        // FIX race condition: guardamos finished en una variable local ANTES de hacer
+        // sem_post(completedPrint). Una vez que hacemos post, el master se desbloquea y
+        // podria modificar state. Si leyeramos state->finished despues del post estariamos
+        // leyendo memoria que el master podria estar tocando al mismo tiempo.
+        bool was_finished = state->finished;
+
         // con este sem_post le avisamos al master "listo, ya imprimi"
         if (sem_post(&sync->completedPrint) == -1) {
             perror("Error en sem_post de completedPrint");
@@ -128,8 +134,8 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // si el master marco finished, hacemos una ultima impresion y despues salimos
-        if (state->finished) {
+        // usamos la copia local, no state->finished directamente
+        if (was_finished) {
             break;
         }
     }

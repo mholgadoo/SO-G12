@@ -29,9 +29,23 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
     // Una celda es "pisable" si está libre (0) o si tiene una recompensa (no es un jugador del 1 al 9)
     bool celda_libre = dentro && (cell_dest < 1 || cell_dest > 9);
 
-    sem_wait(&sync->mutexStatus); // Bloqueamos escritura
+    // FIX race condition: antes solo haciamos sem_wait(mutexStatus) directo,
+    // pero eso esta incompleto. El protocolo correcto del escritor es:
+    //   1. tomar mutexWriter primero -> bloquea nuevos lectores que quieran entrar
+    //   2. recien ahi esperar mutexStatus -> espera que los lectores activos terminen
+    // Sin el paso 1, si los jugadores leen continuamente el master nunca puede
+    // escribir porque siempre hay alguien con mutexStatus (inanicion del escritor).
+    if (sem_wait(&sync->mutexWriter) == -1) {
+        perror("Error en sem_wait de mutexWriter (escritor)");
+        return;
+    }
+    if (sem_wait(&sync->mutexStatus) == -1) {
+        perror("Error en sem_wait de mutexStatus");
+        sem_post(&sync->mutexWriter); // rollback si falla
+        return;
+    }
 
-    // Si corresponde sumamos el puntaje de la recompensa 
+    // Si corresponde sumamos el puntaje de la recompensa
     if (dentro && celda_libre) {
         if (cell_dest != 0) {
             switch(cell_dest) {
@@ -52,7 +66,13 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
         p->invalid_mov++;
     }
 
-    sem_post(&sync->mutexStatus); // Liberamos escritura
+    // liberamos en orden inverso al que tomamos
+    if (sem_post(&sync->mutexStatus) == -1) {
+        perror("Error en sem_post de mutexStatus");
+    }
+    if (sem_post(&sync->mutexWriter) == -1) {
+        perror("Error en sem_post de mutexWriter (escritor)");
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -248,7 +268,9 @@ int main(int argc, char *argv[]) {
 
     // ### INICIALIZACIÓN DE SEMÁFOROS ### //
 
-    // Master <-> Vista
+    // Master <-> Vista: 
+    // arrancan en 0 (bloqueados) porque nadie tiene que imprimir todavia
+    // el master hace post(canPrint) para avisar, la vista hace post(completedPrint) para confirmar
     if (sem_init(&sync->canPrint, 1, 0) == -1) {
         perror("Error en sem_init de canPrint");
         exit(EXIT_FAILURE);
@@ -258,7 +280,11 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Master <-> Jugadores (Lectores-Escritores)
+    // Master <-> Jugadores: patron lectores-escritores con molinete
+    // arrancan en 1 (libres) porque son mutexes binarios
+    // mutexWriter = molinete para evitar que el master se muera de hambre
+    // mutexStatus = protege el GameState (lo toma el primer lector, lo suelta el ultimo)
+    // mutexReaders = protege solo el contador playersReading
     if (sem_init(&sync->mutexWriter, 1, 1) == -1) {
         perror("Error en sem_init de mutexWriter");
         exit(EXIT_FAILURE);
@@ -274,8 +300,8 @@ int main(int argc, char *argv[]) {
     sync->playersReading = 0;
 
     // Control de flujo individual por jugador
+    // arrancan en 0 porque el jugador tiene que esperar a que el master le de el turno
     for (int i = 0; i < num_players; i++) {
-        // Arranca en 0 porque ahora el master reparte los turnos del round robin
         if (sem_init(&sync->allowed_Mov[i], 1, 0) == -1) {
             perror("Error en sem_init de allowed_Mov");
             exit(EXIT_FAILURE);
