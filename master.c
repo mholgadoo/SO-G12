@@ -515,5 +515,43 @@ int main(int argc, char *argv[]) {
         sem_post(&sync->allowed_Mov[i]);
     }
 
+    // ### CLEANUP: LIMPIEZA FINAL DE RECURSOS ### //
+    printf("\nIniciando limpieza de recursos...\n");
+
+    // 1. Esperar a que TODOS los hijos (Vista y Jugadores) mueran pacíficamente
+    // wait(NULL) suspende al master hasta que un hijo termina. 
+    // Cuando devuelve -1, significa que ya no quedan más hijos vivos.
+    while (wait(NULL) > 0);
+    printf("[-] Todos los procesos hijos finalizados (Zombies eliminados).\n");
+
+    // 2. Cerrar todos los pipes de lectura que el Master seguía escuchando
+    for (int i = 0; i < num_players; i++) {
+        close(pipes[i][0]);
+    }
+    printf("[-] Pipes cerrados.\n");
+
+    // 3. Destruir los semáforos POSIX
+    sem_destroy(&sync->canPrint);
+    sem_destroy(&sync->completedPrint);
+    sem_destroy(&sync->mutexWriter);
+    sem_destroy(&sync->mutexStatus);
+    sem_destroy(&sync->mutexReaders);
+    for (int i = 0; i < num_players; i++) {
+        sem_destroy(&sync->allowed_Mov[i]);
+    }
+    printf("[-] Semáforos destruidos.\n");
+
+    // 4. Desmapear la memoria virtual
+    munmap(state, state_size);
+    munmap(sync, sync_size);
+    printf("[-] Memoria desmapeada.\n");
+
+    // 5. Borrar los archivos de Memoria Compartida del Sistema Operativo
+    shm_unlink("/game_state");
+    shm_unlink("/game_sync");
+    printf("[-] Archivos de memoria compartida eliminados\n");
+
+    printf("\n✅ JUEGO CERRADO CORRECTAMENTE. ¡HASTA LA PRÓXIMA!\n");
     return 0;
-}   
+}
+   
