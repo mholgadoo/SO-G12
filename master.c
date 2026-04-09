@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include "common.h" 
+#include <sys/wait.h>
 
 static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, MoveDirection dir) {
     Player *p = &state->players[player_index];
@@ -229,7 +230,7 @@ int main(int argc, char *argv[]) {
 
     // ### SEMBRADO DE RECOMPENSAS ### // 
     char tipos_recompensas[] = {'&', '@', '%', '#', '$'};
-    int cantidad_por_tipo = 5; // Vamos a poner 5 de cada una (25 en total)
+    int cantidad_por_tipo = 10; // Vamos a poner 10 de cada una (50 en total)
 
     for (int r = 0; r < 5; r++) {
         for (int k = 0; k < cantidad_por_tipo; k++) {
@@ -353,10 +354,10 @@ int main(int argc, char *argv[]) {
             //execv(player_paths[i], player_argv);
 
             // Alternamos: pares son random, impares son fijos
-            char *comportamiento = (i % 2 == 0) ? "random" : "fijo"; 
+            char *behavior = (i % 2 == 0) ? "random" : "fijo"; 
             
             // Ahora sí pasamos el argumento "algo" al proceso jugador
-            char *player_argv[] = { player_paths[i], index_str, fd_str, comportamiento, NULL };
+            char *player_argv[] = { player_paths[i], index_str, fd_str, behavior, NULL };
             execv(player_paths[i], player_argv);
 
             // Si llego aca, hubo un error en execv
@@ -383,82 +384,132 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
     // ### BUCLE PRINCIPAL DEL JUEGO ### // 
-    const int test_rounds = 3;
-    bool stop_round_robin = false;
+    int round = 0;
+    int winner_index = -1;
+    bool all_dead = false;
 
-    // por ahora hacemos 3 rondas fijas, pero ya con el orden rotativo del round robin
-    for (int round = 0; round < test_rounds && !stop_round_robin; round++) {
+    while (!state->finished) {
         for (int offset = 0; offset < num_players; offset++) {
             int player_index = (round + offset) % num_players;
-            MoveRequest request;
+            Player *p = &state->players[player_index];
 
-            // con esta formula vamos rotando quien arranca primero en cada ronda
-            // ejemplo con 3 jugadores:
-            // ronda 0 -> 0, 1, 2
-            // ronda 1 -> 1, 2, 0
-            // ronda 2 -> 2, 0, 1
+            // 1. Si el jugador ya fue penalizado/bloqueado antes, lo saltamos
+            if (p->blocked) {
+                continue; 
+            }
+
+            // 2. Le damos luz verde para que juegue
             if (sem_post(&sync->allowed_Mov[player_index]) == -1) {
                 perror("Error habilitando movimiento del jugador");
-                stop_round_robin = true;
+                state->finished = true;
                 break;
             }
 
-            // una vez habilitado ese jugador, esperamos especificamente su mensaje
-            ssize_t bytes_read = read(pipes[player_index][0], &request, sizeof(request));
+            // 3. PREPARAMOS SELECT()
+            fd_set read_fds;
+            FD_ZERO(&read_fds); // Vaciamos la "caja"
+            
+            int pipe_lectura = pipes[player_index][0];
+            FD_SET(pipe_lectura, &read_fds); // Metemos el pipe del jugador actual
+            
+            // select requiere que el primer parámetro sea el fd más alto + 1
+            int nfds = pipe_lectura + 1;
 
-            if (bytes_read == -1) {
-                perror("Error leyendo movimiento del jugador");
-                stop_round_robin = true;
-                break;
-            } else if (bytes_read == 0) {
-                fprintf(stderr, "El jugador %d cerro el pipe sin enviar movimiento.\n", player_index);
-                stop_round_robin = true;
-                break;
-            } else if (bytes_read != (ssize_t)sizeof(request)) {
-                fprintf(stderr, "Se recibio un movimiento incompleto del jugador %d.\n", player_index);
-                stop_round_robin = true;
-                break;
-            } else {
-                // por ahora solo mostramos quien mando y que direccion llego
-                //printf("Ronda %d, turno %d: jugador %d mando direccion %u\n",
-                //(round, offset, player_index, request.direction);
+            // Configuramos el temporizador con el parámetro que recibimos por getopt
+            struct timeval tv;
+            tv.tv_sec = timeout; // Segundos (por defecto 10, o lo que pase el usuario)
+            tv.tv_usec = 0;      // Microsegundos
 
-                // Aplicamos el movimiento real en el tablero
-                aplicar_movimiento(state, sync, player_index, (MoveDirection)request.direction);
+            // 4. EJECUTAMOS SELECT (Nos quedamos esperando aquí)
+            int select_result = select(nfds, &read_fds, NULL, NULL, &tv);
 
-                // Avisamos a la vista que el tablero cambió
+            if (select_result == -1) {
+                perror("Error en select");
+                state->finished = true;
+                break;
+            } 
+            else if (select_result == 0) {
+                // TIMEOUT: El tiempo se agotó.
+                fprintf(stderr, "TIMEOUT: El jugador %d tardo mas de %d segs. Ha sido bloqueado.\n", 
+                        player_index, timeout);
+                p->blocked = true;
+                
+                // Forzamos a la vista a dibujar este bloqueo
                 if (view_path != NULL) {
                     sem_post(&sync->canPrint);
                     sem_wait(&sync->completedPrint);
+                }
+                continue; // Pasamos al siguiente jugador sin hacer read()
+            } 
+            else {
+                // ÉXITO: El jugador mandó su movimiento a tiempo
+                if (FD_ISSET(pipe_lectura, &read_fds)) {
+                    MoveRequest request;
+                    ssize_t bytes_read = read(pipe_lectura, &request, sizeof(request));
 
-                    // usleep frena el proceso en microsegundos. 
-                    // Como nuestro 'delay' está en milisegundos, lo multiplicamos por 5000.
-                    // Con esto logramos que el cambio quede visible en la vista antes de que llegue el próximo movimiento.
-                    usleep(delay * 5000);
+                    if (bytes_read <= 0 || bytes_read != (ssize_t)sizeof(request)) {
+                        fprintf(stderr, "El jugador %d envio datos corruptos o cerro el pipe. Bloqueado.\n", player_index);
+                        p->blocked = true;
+                        continue;
+                    }
+
+                    // Aplicamos el movimiento real en el tablero
+                    aplicar_movimiento(state, sync, player_index, (MoveDirection)request.direction);
+
+                    // Avisamos a la vista que el tablero cambió
+                    if (view_path != NULL) {
+                        sem_post(&sync->canPrint);
+                        sem_wait(&sync->completedPrint);
+                        usleep(delay * 5000); 
+                    }
                 }
             }
         }
+        
+       // 5. EVALUACIÓN SILENCIOSA DE FIN DE JUEGO
+        bool all_blocked = true;
+        for (int i = 0; i < num_players; i++) {
+            if (state->players[i].score >= 30) {
+                winner_index = i;
+                state->finished = true;
+                break;
+            }
+            if (!state->players[i].blocked) {
+                all_blocked = false;
+            }
+        }
+        
+        if (!state->finished && all_blocked) {
+            all_dead = true;
+            state->finished = true;
+        }
+
+        round++;
     }
-
-    // primero marcamos finished para que el jugador, cuando se despierte, salga del loop
-    state->finished = true;
-
-    // hacemos una ultima señal a la vista para que vea el estado final con finished = true
-    // de esa forma imprime una ultima vez y puede salir prolijamente de su loop
+        
+    // --- EL MOMENTO CLAVE ---
+    // Primero hacemos la última señal a la vista para que dibuje el tablero final.
+    // La Vista hará su última limpieza de pantalla aquí.
     if (view_path != NULL) {
-        if (sem_post(&sync->canPrint) == -1) {
-            perror("Error avisando a la vista");
-            exit(EXIT_FAILURE);
-        }
-
-        if (sem_wait(&sync->completedPrint) == -1) {
-            perror("Error esperando a la vista");
-            exit(EXIT_FAILURE);
-        }
+        sem_post(&sync->canPrint);
+        sem_wait(&sync->completedPrint);
     }
 
+    // AHORA QUE LA VISTA TERMINÓ Y YA NO LIMPIARÁ LA PANTALLA, EL MÁSTER IMPRIME
+    if (winner_index != -1) {
+        printf("\n🏆 ¡EL JUGADOR %d (%s) HA GANADO LA PARTIDA CON %u PUNTOS! 🏆\n", 
+               winner_index + 1, state->players[winner_index].name, state->players[winner_index].score);
+    } 
+    else if (all_dead) {
+        printf("\n💀 TODOS LOS JUGADORES ESTÁN BLOQUEADOS. FIN DEL JUEGO. 💀\n");
+    }
+
+    // Destrabamos a los jugadores restantes para que salgan
+    for (int i = 0; i < num_players; i++) {
+        sem_post(&sync->allowed_Mov[i]);
+    }
+    
     // aca destrabamos a todos porque cada uno puede haber quedado esperando su proximo turno
     for (int i = 0; i < num_players; i++) {
         sem_post(&sync->allowed_Mov[i]);

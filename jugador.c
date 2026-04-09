@@ -20,7 +20,7 @@ static MoveDirection fixed_behavior(int turn) {
 }
 
 // Funcion util para el radar 
-static bool es_recompensa(char c) {
+static bool is_reward(char c) {
     return (c == '&' || c == '@' || c == '%' || c == '#' || c == '$');
 }
 
@@ -243,16 +243,16 @@ int main(int argc, char *argv[])
 
             // RADAR: Miramos las 4 celdas adyacentes.
             // OJO: Primero verificamos (mi_x + 1 < w) para no salirnos del tablero
-            if (mi_x + 1 < w && es_recompensa(state->board[mi_y * w + (mi_x + 1)])) {
+            if (mi_x + 1 < w && is_reward(state->board[mi_y * w + (mi_x + 1)])) {
                 radar = MOVE_RIGHT;
             } 
-            else if (mi_x > 0 && es_recompensa(state->board[mi_y * w + (mi_x - 1)])) {
+            else if (mi_x > 0 && is_reward(state->board[mi_y * w + (mi_x - 1)])) {
                 radar = MOVE_LEFT;
             } 
-            else if (mi_y + 1 < h && es_recompensa(state->board[(mi_y + 1) * w + mi_x])) {
+            else if (mi_y + 1 < h && is_reward(state->board[(mi_y + 1) * w + mi_x])) {
                 radar = MOVE_DOWN;
             } 
-            else if (mi_y > 0 && es_recompensa(state->board[(mi_y - 1) * w + mi_x])) {
+            else if (mi_y > 0 && is_reward(state->board[(mi_y - 1) * w + mi_x])) {
                 radar = MOVE_UP;
             }
         }

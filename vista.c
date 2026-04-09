@@ -19,7 +19,7 @@ static void print_state(const GameState *state)
     for (int i = 0; i < state->numPlayers; i++) {
         const Player *player = &state->players[i];
         printf("Jugador %d: %s | score=%u | valid=%u | invalid=%u | pos=(%hu,%hu) | blocked=%s | pid=%d\n",
-               i, player->name, player->score, player->valid_mov, player->invalid_mov,
+               i+1, player->name, player->score, player->valid_mov, player->invalid_mov,
                player->x, player->y, player->blocked ? "si" : "no", (int)player->pid);
     }
 
