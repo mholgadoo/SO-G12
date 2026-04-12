@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
         // sem_post(completedPrint). Una vez que hacemos post, el master se desbloquea y
         // podria modificar state. Si leyeramos state->finished despues del post estariamos
         // leyendo memoria que el master podria estar tocando al mismo tiempo.
-        bool was_finished = state->finished;
+        bool was_finished =state->finished;
 
         // con este sem_post le avisamos al master "listo, ya imprimi"
         if (sem_post(&sync->completedPrint) == -1) {

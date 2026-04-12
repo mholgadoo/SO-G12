@@ -10,7 +10,7 @@
 
 // Comportamiento random 
 static MoveDirection random_behavior(void) {
-    return (MoveDirection)(rand() % 4);
+    return (MoveDirection)(rand() % 8);
 }
 
 /*
@@ -129,10 +129,7 @@ int main(int argc, char *argv[])
     // 2. El pipe siempre es el FD 1 (stdout) 
     int pipe_fd = 1;
 
-    // Alternamos: pares son random, impares son fijos
-    char *behavior = "random"; 
-
-    int turn = 0; // Agregamos el contador de turnos
+    int turn = 0; // Contador de turnos
     srand(time(NULL) ^ getpid()); // Semilla única por jugador usando su PID
 
     // Obtengo file descriptor de /game_state

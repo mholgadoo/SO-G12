@@ -7,10 +7,14 @@
 #include <sys/types.h>
 
 typedef enum {
-    MOVE_DOWN = 0,
-    MOVE_LEFT = 1,
-    MOVE_UP = 2,
-    MOVE_RIGHT = 3
+    MOVE_UP         = 0,  // Norte
+    MOVE_UP_RIGHT   = 1,  // Noreste
+    MOVE_RIGHT      = 2,  // Este
+    MOVE_DOWN_RIGHT = 3,  // Sureste
+    MOVE_DOWN       = 4,  // Sur
+    MOVE_DOWN_LEFT  = 5,  // Suroeste
+    MOVE_LEFT       = 6,  // Oeste
+    MOVE_UP_LEFT    = 7   // Noroeste
 } MoveDirection;
  
 typedef struct {

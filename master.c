@@ -13,11 +13,20 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
     int new_x = (int)p->x;
     int new_y = (int)p->y;
 
+    // 8 direcciones: 0=Norte, sentido horario. Valores fuera de [0-7] son invalidos.
     switch (dir) {
-        case MOVE_RIGHT: new_x++; break;
-        case MOVE_LEFT:  new_x--; break;
-        case MOVE_UP:    new_y--; break;
-        case MOVE_DOWN:  new_y++; break;
+        case MOVE_UP:         new_y--;             break;
+        case MOVE_UP_RIGHT:   new_x++; new_y--;    break;
+        case MOVE_RIGHT:      new_x++;             break;
+        case MOVE_DOWN_RIGHT: new_x++; new_y++;    break;
+        case MOVE_DOWN:       new_y++;             break;
+        case MOVE_DOWN_LEFT:  new_x--; new_y++;    break;
+        case MOVE_LEFT:       new_x--;             break;
+        case MOVE_UP_LEFT:    new_x--; new_y--;    break;
+        default:
+            // Direccion fuera del rango [0-7]: movimiento invalido
+            p->invalid_mov++;
+            return;
     }
 
     bool dentro = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
@@ -581,7 +590,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_players; i++) {
         sem_post(&sync->allowed_Mov[i]);
     }
-   
+
     // ### CLEANUP: LIMPIEZA FINAL DE RECURSOS ### //
     printf("\nIniciando limpieza de recursos...\n");
 
@@ -589,13 +598,12 @@ int main(int argc, char *argv[]) {
         close(pipes[i][0]);
     }
 
-    // ESPERAR A LOS HIJOS E IMPRIMIR SU ESTADO 
+    // ESPERAR A LOS HIJOS E IMPRIMIR SU ESTADO
     int status;
     pid_t child_pid;
     while ((child_pid = wait(&status)) > 0) {
-        // Buscamos si el PID que murió pertenece a un jugador
         int idx = -1;
-        for(int i = 0; i < num_players; i++) {
+        for (int i = 0; i < num_players; i++) {
             if (state->players[i].pid == child_pid) {
                 idx = i;
                 break;
@@ -604,16 +612,13 @@ int main(int argc, char *argv[]) {
 
         if (WIFEXITED(status)) {
             if (idx != -1) {
-                // Era un jugador
-                printf("Player %s (%d) exited (%d) with a score of %u / %u / %u\n", 
-                       state->players[idx].name, idx, WEXITSTATUS(status), 
+                printf("Player %s (%d) exited (%d) with a score of %u / %u / %u\n",
+                       state->players[idx].name, idx, WEXITSTATUS(status),
                        state->players[idx].score, state->players[idx].valid_mov, state->players[idx].invalid_mov);
             } else {
-                // Era la vista
                 printf("View exited (%d)\n", WEXITSTATUS(status));
             }
-        } 
-        else if (WIFSIGNALED(status)) {
+        } else if (WIFSIGNALED(status)) {
             if (idx != -1) {
                 printf("Player %s (%d) killed by signal %d\n", state->players[idx].name, idx, WTERMSIG(status));
             } else {
@@ -623,7 +628,6 @@ int main(int argc, char *argv[]) {
     }
     printf("[-] Todos los procesos hijos finalizados.\n");
 
-    // 3. Destruir semáforos, desmapear y borrar memoria
     sem_destroy(&sync->canPrint);
     sem_destroy(&sync->completedPrint);
     sem_destroy(&sync->mutexWriter);
