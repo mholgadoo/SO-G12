@@ -543,7 +543,7 @@ int main(int argc, char *argv[]) {
         round++;
     }
         
-    // --- EL MOMENTO CLAVE ---
+    // Se imprime el tablero final 
     if (view_path != NULL) {
         sem_post(&sync->canPrint);
         sem_wait(&sync->completedPrint);

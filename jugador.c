@@ -13,12 +13,6 @@ static MoveDirection random_behavior(void) {
     return (MoveDirection)(rand() % 4);
 }
 
-// Comportamiento fijo 
-static MoveDirection fixed_behavior(int turn) {
-    MoveDirection secuencia[] = { MOVE_RIGHT, MOVE_RIGHT, MOVE_DOWN, MOVE_DOWN };
-    return secuencia[turn % 4];
-}
-
 /*
 logica base de begin_read, sin los if de validacion:
 
@@ -296,12 +290,7 @@ int main(int argc, char *argv[])
             break; 
         }
         
-        if (strcmp(behavior, "random") == 0) {
-            request.direction = random_behavior();
-        } else {
-            // Asumimos que si no es random, es "fijo"
-            request.direction = fixed_behavior(turn);
-        }
+        request.direction = random_behavior();
         
         turn++; // Incrementamos el turno para el algoritmo fijo
 

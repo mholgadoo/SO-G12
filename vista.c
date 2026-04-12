@@ -9,7 +9,7 @@
  
 static void print_state(const GameState *state)
 {
-    printf("\033[H\033[J");
+    // printf("\033[H\033[J");
     
     printf("\n=== ESTADO DEL JUEGO ===\n");
     printf("Tablero: %hu x %hu\n", state->width, state->height);
