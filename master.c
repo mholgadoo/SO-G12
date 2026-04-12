@@ -517,7 +517,7 @@ int main(int argc, char *argv[]) {
                         sem_post(&sync->canPrint);
                         sem_wait(&sync->completedPrint);
                         // Solo para testear la progresion del juego
-                        //usleep(delay * 5000); 
+                        usleep(delay * 1000); 
                     }
                 }
             }
