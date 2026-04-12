@@ -8,12 +8,12 @@
 #include "common.h" 
 #include <sys/wait.h>
 
-static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, MoveDirection dir) {
+static void apply_movement(GameState *state, Sync *sync, int player_index, MoveDirection dir) {
     Player *p = &state->players[player_index];
     int new_x = (int)p->x;
     int new_y = (int)p->y;
 
-    // 8 direcciones: 0=Norte, sentido horario. Valores fuera de [0-7] son invalidos.
+    // 8 direcciones
     switch (dir) {
         case MOVE_UP:         new_y--;             break;
         case MOVE_UP_RIGHT:   new_x++; new_y--;    break;
@@ -29,23 +29,17 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
             return;
     }
 
-    bool dentro = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
-    // Leemos qué hay en la celda destino
+    bool inside = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
+    // leemos que hay en la celda destino
     signed char cell_dest = 0;
-    if (dentro) {
+    if (inside) {
         cell_dest = (signed char)state->board[new_y * state->width + new_x];
     }
 
-    // Una celda es libre SÓLO si tiene una recompensa (valores del 1 al 9).
-    // Si es <= 0, es una celda capturada por un jugador.
-    bool celda_libre = dentro && (cell_dest >= 1 && cell_dest <= 9);
+    // una celda es libre si tiene una recompensa 
+    // si es <= 0, es una celda capturada por un jugador
+    bool free_cell = inside && (cell_dest >= 1 && cell_dest <= 9);
 
-    // FIX race condition: antes solo haciamos sem_wait(mutexStatus) directo,
-    // pero eso esta incompleto. El protocolo correcto del escritor es:
-    //   1. tomar mutexWriter primero -> bloquea nuevos lectores que quieran entrar
-    //   2. recien ahi esperar mutexStatus -> espera que los lectores activos terminen
-    // Sin el paso 1, si los jugadores leen continuamente el master nunca puede
-    // escribir porque siempre hay alguien con mutexStatus (inanicion del escritor).
     if (sem_wait(&sync->mutexWriter) == -1) {
         perror("Error en sem_wait de mutexWriter (escritor)");
         return;
@@ -56,14 +50,14 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
         return;
     }
 
-    if (dentro && celda_libre) {
-        // La recompensa es un número del 1 al 9, se suma directamente al score del jugador
+    if (inside && free_cell) {
+        // suma directamente al score del jugador
         p->score += cell_dest;
 
         p->x = (unsigned short)new_x;
         p->y = (unsigned short)new_y;
         
-        // Marcamos la nueva celda con el ID negativo del jugador (0, -1, -2...)
+        // marcamos la nueva celda con el ID negativo del jugador (0, -1, -2...)
         state->board[new_y * state->width + new_x] = (char)(-player_index); 
         
         p->valid_mov++;
@@ -81,15 +75,15 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
 }
 
 int main(int argc, char *argv[]) {
-    // ### RECEPCION Y PROCESAMIENTO DE PARÁMETROS ### // 
-    // 1. Variables de configuración con sus valores por defecto
-    int width = 10;                 // Mínimo y default: 10
-    int height = 10;                // Mínimo y default: 10
+    // ### RECEPCION Y PROCESAMIENTO DE PARaMETROS ### // 
+    // 1. Variables de configuraciOn con sus valores por defecto
+    int width = 10;                 // Minimo y default: 10
+    int height = 10;                // Minimo y default: 10
     int delay = 200;                // Default: 200 ms
     int timeout = 10;               // Default: 10 segundos
     int seed = time(NULL);          // Default: time(NULL)
     char *view_path = NULL;         // Default: Sin vista
-    char *player_paths[9];          // Máximo 9 jugadores
+    char *player_paths[9];          // Maximo 9 jugadores
     int num_players = 0;            // Contador de jugadores ingresados
 
     int opt;
@@ -98,11 +92,11 @@ int main(int argc, char *argv[]) {
         switch (opt) {
             case 'w':
                 width = atoi(optarg);
-                if (width < 10) width = 10; // Validación de mínimo
+                if (width < 10) width = 10; // ValidaciOn de minimo
                 break;
             case 'h':
                 height = atoi(optarg);
-                if (height < 10) height = 10; // Validación de mínimo
+                if (height < 10) height = 10; // ValidaciOn de minimo
                 break;
             case 'd':
                 delay = atoi(optarg);
@@ -117,71 +111,70 @@ int main(int argc, char *argv[]) {
                 view_path = optarg;
                 break;
             case 'p':
-                // Primero guardamos el argumento que getopt ya capturó en optarg
+                // Primero guardamos el argumento que getopt ya capturO en optarg
                 if (num_players < 9) {
                     player_paths[num_players++] = optarg;
                 }
                 // Revisamos manualmente los siguientes argumentos hasta encontrar otra bandera ('-')
-                // Si no hacemos este while, solo se capturará el primer jugador y los demás serán ignorados por getopt
+                // Si no hacemos este while, solo se capturara el primer jugador y los demas seran ignorados por getopt
                 while (optind < argc && argv[optind][0] != '-') {
                     if (num_players < 9) {
                         player_paths[num_players++] = argv[optind];
                     }
-                    optind++; // Avanzamos el índice manualmente
+                    optind++; // Avanzamos el indice manualmente
                 }
                 break;
             default:
-                fprintf(stderr, "Uso incorrecto de parámetros.\n");
+                fprintf(stderr, "Uso incorrecto de parametros.\n");
                 exit(EXIT_FAILURE);
         }
     }
 
-    // 3. Validación de jugarores
+    // 3. ValidaciOn de jugarores
     if (num_players == 0) {
         fprintf(stderr, "Error: Se requiere al menos un jugador.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Solo para comprobar que todo cargo bien 
-    srand((unsigned int)seed); // <-- AGREGAR ESTO PARA QUE SEAN DISTINTAS PARTIDAS
-    printf("Master iniciado con Tablero %dx%d, Delay: %d, Timeout: %d, Semilla: %d\n", 
-           width, height, delay, timeout, seed);
-    printf("Jugadores detectados: %d\n", num_players);
-
-    // ### LÓGICA DE MEMORIA ### // 
+    // 
+    srand((unsigned int)seed); 
+    
+    // ### LOGICA DE MEMORIA ### // 
 
     // 1. Limpieza preventiva de recursos compartidos anteriores
     shm_unlink("/game_state");
     shm_unlink("/game_sync");
 
-    // 2. Cálculo de tamaños
+    // 2. Calculo de tamanos
     size_t board_bytes = width * height * sizeof(char);
-    size_t state_size = sizeof(GameState) + board_bytes;  // Sumamos el tamaño estático del struct más el tamaño dinámico del tablero
+    size_t state_size = sizeof(GameState) + board_bytes;  // Sumamos el tamano estatico del struct mas el tamano dinamico del tablero
     size_t sync_size = sizeof(Sync);
 
-    // CREACIÓN DE MEMORIA COMPARTIDA: /game_state //
-    int fd_state = shm_open("/game_state", O_CREAT | O_EXCL | O_RDWR, 0666); // Creamos la memoria compartida
+    // 3. Creacion de la memoria compratida /game_state //
+    int fd_state = shm_open("/game_state", O_CREAT | O_EXCL | O_RDWR, 0666); 
     if (fd_state == -1) {
         perror("Error creando /game_state");
         exit(EXIT_FAILURE);
     }
 
-    if (ftruncate(fd_state, state_size) == -1) { // Ajustamos el tamaño de la memoria compartida
+    // 4. Ajustamos el tamano de la memoria compartida
+    if (ftruncate(fd_state, state_size) == -1) { 
         perror("Error en ftruncate de /game_state");
         exit(EXIT_FAILURE);
     }
 
-    GameState *state = mmap(NULL, state_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_state, 0); // Mapeamos la memoria compartida a nuestro espacio de direcciones
+    // 5. Mapeamos la memoria compartida a nuestro espacio de direcciones
+    GameState *state = mmap(NULL, state_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_state, 0); 
     if (state == MAP_FAILED) {
         perror("Error en mmap de /game_state");
         exit(EXIT_FAILURE);
     }
-    // Una vez mapeada la memoria, podemos cerrar el descriptor de archivo ya que no lo vamos a necesitar más 
-    // El espacio de memoria seguirá existiendo y lo vamos a poder acceder a través del puntero state
+    // Una vez mapeada la memoria, podemos cerrar el descriptor de archivo ya que no lo vamos a necesitar mas 
+    // El espacio de memoria seguira existiendo y lo vamos a poder acceder a traves del puntero state
     close(fd_state); 
 
     
-    // CREACIÓN DE MEMORIA COMPARTIDA: /game_sync // 
+    // 6. Creacion de memoria compartida: /game_sync // 
     int fd_sync = shm_open("/game_sync", O_CREAT | O_EXCL | O_RDWR, 0666);
     if (fd_sync == -1) {
         perror("Error creando /game_sync");
@@ -200,19 +193,19 @@ int main(int argc, char *argv[]) {
     }
     close(fd_sync);
 
-    // ### INICIALIZACIÓN DE DATOS Y SINCRONIZACIÓN ### //
+    // ### INICIALIZACION DE DATOS Y SINCRONIZACION ### //
     
-    // Inicializamos las variables estáticas del juego
+    // 1. Inicializamos las variables estaticas del juego
     state->width = width;
     state->height = height;
     state->numPlayers = num_players;
     state->finished = false;
-    // Limpiamos el tablero 
+    // 2. Limpiamos el tablero 
     memset(state->board, 0, board_bytes);
-    // Limpiamos el array de jugadores
+    // 3. Limpiamos el array de jugadores
     memset(state->players, 0, sizeof(state->players));
 
-    // Sembrado de recompensas  
+    // 4. Sembrado de recompensas  
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             // rand() % 9 genera de 0 a 8. Le sumamos 1 para tener del 1 al 9.
@@ -222,7 +215,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Inicializamos los jugadores
+    // 5. Inicializamos los jugadores
     for (int i = 0; i < num_players; i++) {
         Player *player = &state->players[i];
         // Obtenemos el nombre del jugador
@@ -240,14 +233,8 @@ int main(int argc, char *argv[]) {
         player->score = 0;
         player->invalid_mov = 0;
         player->valid_mov = 0;
-        // Inicializamos las coordenadas del jugador
-        /* ponemos en width y height porque el tablero va de 0 a width-1 y de 0 a height-1 entonces
-        *  esto significa que el jugador no tiene una posicion asignada todavia
-        */
-        //player->x = (unsigned short)width;
-        //player->y = (unsigned short)height;
         
-        // Generamos posiciones aleatorias hasta encontrar una celda vacía (0)
+        // Generamos posiciones aleatorias 
         unsigned short rand_x, rand_y;
         do {
             rand_x = (unsigned short)(rand() % width);
@@ -263,7 +250,7 @@ int main(int argc, char *argv[]) {
         player->blocked = false;
     }
 
-    // ### INICIALIZACIÓN DE SEMÁFOROS ### //
+    // ### INICIALIZACION DE SEMAFOROS ### //
 
     // Master <-> Vista: 
     // arrancan en 0 (bloqueados) porque nadie tiene que imprimir todavia
@@ -305,7 +292,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // ### CREACIÓN DE PIPES ### //
+    // ### CREACION DE PIPES ### //
 
     int pipes[9][2]; // pipes[i][0] = lectura (master), pipes[i][1] = escritura (jugador)
     for (int i = 0; i < num_players; i++) {
@@ -315,7 +302,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // ### CREACIÓN DEL PROCESO HIJO VISTA ### // 
+    // ### CREACION DEL PROCESO HIJO VISTA ### // 
     if (view_path != NULL) {
         pid_t pid = fork();
         if (pid == -1) {
@@ -331,26 +318,25 @@ int main(int argc, char *argv[]) {
                 close(pipes[i][1]);
             }
 
-            // La vista recibe ancho y alto como parámetros 
+            // La vista recibe ancho y alto como parametros 
             char width_str[12];
             char height_str[12];
             snprintf(width_str, sizeof(width_str), "%d", width);
             snprintf(height_str, sizeof(height_str), "%d", height);
 
-            // Armamos el argv con: {ruta, ancho, alto, NULL}
             char *view_argv[] = { view_path, width_str, height_str, NULL };
             
             execv(view_path, view_argv);
 
-            // Si llega aquí, hubo un error en execv
+            // Si llega aqui, hubo un error en execv
             perror("Error ejecutando vista");
             _exit(EXIT_FAILURE);
         }
-        // Proceso padre: continúa la ejecución del master
+        // Proceso padre: continua la ejecuciOn del master
     }
 
-    // ### CREACIÓN DE PROCESOS HIJOS JUGADORES ### // 
-    // Bloqueamos la lectura para que ningún jugador se busque a sí mismo
+    // ### CREACION DE PROCESOS HIJOS JUGADORES ### // 
+    // Bloqueamos la lectura para que ningun jugador se busque a si mismo
     // hasta que el Master haya terminado de anotar TODOS los PIDs.
     if (sem_wait(&sync->mutexStatus) == -1) {
         perror("Error bloqueando estado inicial");
@@ -377,8 +363,8 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // --- REDIRECCIÓN DE SALIDA ESTÁNDAR ---
-            // 2. Conectamos el pipe de escritura a la salida estándar (FD 1)
+            // --- REDIRECCION DE SALIDA ESTANDAR ---
+            // 2. Conectamos el pipe de escritura a la salida estandar (FD 1)
             if (dup2(pipes[i][1], STDOUT_FILENO) == -1) {
                 perror("Error en dup2");
                 _exit(EXIT_FAILURE);
@@ -404,7 +390,7 @@ int main(int argc, char *argv[]) {
         state->players[i].pid = pid;
         close(pipes[i][1]); // El padre cierra su lado de escritura
     }
-    // Ahora que todos los PIDs están escritos, dejamos que los jugadores lean.
+    // Ahora que todos los PIDs estan escritos, dejamos que los jugadores lean.
     if (sem_post(&sync->mutexStatus) == -1) {
         perror("Error liberando estado inicial");
     }
@@ -448,22 +434,22 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
-            // 3. PREPARAMOS SELECT()
+            // 3. Preparamos el select()
             fd_set read_fds;
             FD_ZERO(&read_fds); // Vaciamos la "caja"
             
             int pipe_lectura = pipes[player_index][0];
             FD_SET(pipe_lectura, &read_fds); // Metemos el pipe del jugador actual
             
-            // select requiere que el primer parámetro sea el fd más alto + 1
+            // Select requiere que el primer parametro sea el fd mas alto + 1
             int nfds = pipe_lectura + 1;
 
-            // Configuramos el temporizador con el parámetro que recibimos por getopt
+            // Configuramos el temporizador con el parametro que recibimos por getopt
             struct timeval tv;
             tv.tv_sec = timeout; // Segundos (por defecto 10, o lo que pase el usuario)
             tv.tv_usec = 0;      // Microsegundos
 
-            // 4. EJECUTAMOS SELECT (Nos quedamos esperando aquí)
+            
             int select_result = select(nfds, &read_fds, NULL, NULL, &tv);
 
             if (select_result == -1) {
@@ -472,9 +458,7 @@ int main(int argc, char *argv[]) {
                 break;
             } 
             else if (select_result == 0) {
-                // TIMEOUT: El tiempo se agotó.
-                fprintf(stderr, "TIMEOUT: El jugador %d tardo mas de %d segs. Ha sido bloqueado.\n", 
-                        player_index, timeout);
+                // El tiempo se agoto.
                 p->blocked = true;
                 
                 // Forzamos a la vista a dibujar este bloqueo
@@ -485,34 +469,36 @@ int main(int argc, char *argv[]) {
                 continue; // Pasamos al siguiente jugador sin hacer read()
             } 
             else {
-                // ÉXITO: El jugador mandó su movimiento a tiempo
+                // EXITO: El jugador mando su movimiento a tiempo
                 if (FD_ISSET(pipe_lectura, &read_fds)) {
                     MoveRequest request;
                     ssize_t bytes_read = read(pipe_lectura, &request, sizeof(request));
 
+                    
                     if (bytes_read == 0) {
-                        printf("El jugador %d (%s) detectó que no tiene salida y se rindió. Queda BLOQUEADO.\n", 
-                                player_index + 1, p->name);
+                        // Jugador encerrado, read() devuelve 0 (End of File) si TODOS
+                        // los extremos de escritura del pipe han sido cerrados
+                        // En nuestro caso, el jugador esta encerrado
                         p->blocked = true;
                         continue;
                     }
 
                     if (bytes_read <= 0 || bytes_read != (ssize_t)sizeof(request)) {
-                        fprintf(stderr, "El jugador %d envio datos corruptos o cerro el pipe. Bloqueado.\n", player_index);
+                        // El proceso hijo falló o envió una estructura incompleta.
                         p->blocked = true;
                         continue;
                     }
                     unsigned int validos_antes = p->valid_mov;
 
                     // Aplicamos el movimiento real en el tablero
-                    aplicar_movimiento(state, sync, player_index, (MoveDirection)request.direction);
+                    apply_movement(state, sync, player_index, (MoveDirection)request.direction);
 
-                    // Si el contador subió, fue un movimiento válido. Reseteamos el reloj de inactividad.
+                    // Si el contador subio, fue un movimiento valido. Reseteamos el reloj de inactividad.
                     if (p->valid_mov > validos_antes) {
                         last_valid_move_time = time(NULL);
                     }
 
-                    // Avisamos a la vista que el tablero cambió
+                    // Avisamos a la vista que el tablero cambio
                     if (view_path != NULL) {
                         sem_post(&sync->canPrint);
                         sem_wait(&sync->completedPrint);
@@ -523,7 +509,7 @@ int main(int argc, char *argv[]) {
             }
         }
         
-       // 5. EVALUACIÓN DE FIN DE JUEGO
+       // 5. Evaluacion de fin de juego
         bool all_blocked = true;
         for (int i = 0; i < num_players; i++) {
             if (!state->players[i].blocked) {
@@ -535,17 +521,15 @@ int main(int argc, char *argv[]) {
         // Calculamos el tiempo de inactividad global
         double segundos_inactivos = difftime(time(NULL), last_valid_move_time);
         
-        // Si el juego todavía está corriendo, revisamos las condiciones de victoria/corte
+        // Si el juego todavia esta corriendo, revisamos las condiciones de victoria/corte
         if (!state->finished) {
             if (all_blocked) {
-                all_dead = true;           // Usado más abajo para el printf de 💀
+                all_dead = true;     
                 state->finished = true;
             } 
             else if (segundos_inactivos >= timeout) {
-                printf("\n⏳ TIEMPO AGOTADO: Han pasado %d segundos sin que nadie logre un movimiento válido.\n", timeout);
                 state->finished = true;
                 // No ponemos all_dead = true porque perdieron por tiempo, 
-                // no necesariamente porque todos estén encerrados.
             }
         }
 
@@ -568,12 +552,12 @@ int main(int argc, char *argv[]) {
             winner_index = i;
         } 
         else if (current->score == best->score) {
-            // Desempate 1: Menor cantidad de movimientos válidos
+            // Desempate 1: Menor cantidad de movimientos validos
             if (current->valid_mov < best->valid_mov) {
                 winner_index = i;
             } 
             else if (current->valid_mov == best->valid_mov) {
-                // Desempate 2: Menor cantidad de movimientos inválidos
+                // Desempate 2: Menor cantidad de movimientos invalidos
                 if (current->invalid_mov < best->invalid_mov) {
                     winner_index = i;
                 }
@@ -591,14 +575,14 @@ int main(int argc, char *argv[]) {
         sem_post(&sync->allowed_Mov[i]);
     }
 
-    // ### CLEANUP: LIMPIEZA FINAL DE RECURSOS ### //
+    // ### CLEANUP: Limpieza final de recursos ### //
     printf("\nIniciando limpieza de recursos...\n");
 
     for (int i = 0; i < num_players; i++) {
         close(pipes[i][0]);
     }
 
-    // ESPERAR A LOS HIJOS E IMPRIMIR SU ESTADO
+    // Esperar a los hijos e imprimir su estado
     int status;
     pid_t child_pid;
     while ((child_pid = wait(&status)) > 0) {
@@ -642,6 +626,6 @@ int main(int argc, char *argv[]) {
     shm_unlink("/game_state");
     shm_unlink("/game_sync");
 
-    printf("\n✅ JUEGO CERRADO CORRECTAMENTE. ¡HASTA LA PRÓXIMA!\n");
+    printf("\n✅ JUEGO CERRADO CORRECTAMENTE. ¡HASTA LA PROXIMA!\n");
     return 0;
 }

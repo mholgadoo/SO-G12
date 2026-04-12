@@ -4,7 +4,7 @@ Trabajo Práctico Nº 1 de Sistemas Operativos (ITBA). Implementación del juego
 
 ---
 
-## Compilación y ejecución
+### Compilación y ejecución
 
 ### Requisito previo: imagen Docker de la cátedra
 
@@ -76,22 +76,29 @@ El punto de entrada es el proceso `master`. Los parámetros entre corchetes son 
 
 ---
 
-## Decisiones de diseño
+### Decisiones de diseño
+
+- Para evitar que un proceso acorralado sature el sistema enviando movimientos inválidos en un bucle infinito, se dotó al proceso Jugador de una evaluación de entorno espacial. Antes de emitir un movimiento, el jugador escanea sus celdas adyacentes (matriz de 3x3). Si determina que no existen rutas válidas , el proceso finaliza su ejecución de forma voluntaria, cerrando su descriptor de archivo. Esto genera un End of File (EOF) en el pipe, lo que permite al proceso Máster detectar la rendición instantáneamente (read() == 0) y marcar al jugador como bloqueado.
+
+- Para prevenir interbloqueos causados por algoritmos deficientes o procesos colgados, el Máster monitorea la lectura de los pipes mediante la llamada al sistema select(). Si el temporizador de select() expira antes de recibir una solicitud de movimiento, se asume inactividad severa y el jugador es descalificado y bloqueado automáticamente.
+
+- Adicionalmente, el Máster utiliza la función difftime() para medir el tiempo real transcurrido desde el último movimiento válido registrado en todo el tablero. La ejecución del bucle principal del juego se interrumpe de forma absoluta bajo dos condiciones concurrentes: cuando el arreglo completo de jugadores alcanza el estado de bloqueado, o cuando se supera el tiempo máximo de inactividad global sin progreso en el tablero.
 
 ### Arquitectura general
 
 El sistema está compuesto por tres procesos independientes que se comunican mediante IPC POSIX:
 
-- **Master:** coordina el juego, valida movimientos y gestiona el estado compartido.
-- **Vista:** lee el estado compartido y lo imprime en terminal.
-- **Jugador:** lee el estado compartido y envía solicitudes de movimiento al master mediante un pipe anónimo.
+- **Master:** Proceso orquestador. Inicializa IPCs, genera procesos hijos, rutea la comunicación vía pipes y dicta el avance de los turnos.
+- **Vista:** Proceso monitor. Consume el estado mediante un esquema de semáforos binarios sincronizados con el Máster.
+- **Jugador:** Proceso cliente. Aplica lógica espacial de detección de encierro y emite solicitudes aleatorias hacia el Máster.
+- **Common.h** Contiene las estructuras de datos, el layout de la memoria compartida (GameState y Sync) y enumeradores compartidos por todos los módulos.
 
 ### Memoria compartida
 
 Se utilizan dos memorias compartidas:
 
-- `/game_state`: contiene el estado del juego (tablero, jugadores, puntajes, posiciones, etc.).
-- `/game_sync`: contiene los semáforos de sincronización entre procesos.
+- `/game_state`: Contiene el estado del juego (tablero, jugadores, puntajes, posiciones, etc.).
+- `/game_sync`: Contiene los semáforos de sincronización entre procesos.
 
 ### Sincronización
 
@@ -119,7 +126,7 @@ El master distribuye los jugadores de forma determinística en el tablero, garan
 
 ---
 
-## Limitaciones
+### Limitaciones
 
 - El jugador implementa una estrategia principalmente aleatoria; no realiza planificación de caminos.
 - La vista imprime el estado en texto plano por terminal, sin interfaz gráfica avanzada.
@@ -127,13 +134,32 @@ El master distribuye los jugadores de forma determinística en el tablero, garan
 
 ---
 
-## Problemas encontrados y soluciones
+### Gestión de Recursos
+
+- Al finalizar la partida (sea por victoria o por timeout global), el Máster se asegura de:
+
+1. Destrabar a los jugadores restantes mediante sem_post(&sync->allowed_Mov[i]) para que puedan salir de   sus bucles.
+
+2. Esperar la finalización de la Vista y de todos los Jugadores capturando sus estados de salida mediante wait().
+
+3. Destruir todos los semáforos POSIX (sem_destroy).
+
+4. Desmapear la memoria (munmap) y desenlazar los objetos de memoria compartida (shm_unlink) para no dejar basura en /dev/shm.
+
+---
+
+### Problemas encontrados y soluciones
 
 **Inanición del master (escritor):** En la primera versión, el master no podía escribir porque los jugadores leían el estado continuamente, manteniendo el mutex tomado indefinidamente. Se resolvió incorporando el semáforo `mutexWriter` que bloquea el ingreso de nuevos lectores en cuanto el master quiere escribir, implementando así la variante del problema lectores-escritores que previene la inanición del escritor.
 
 ---
 
-## Citas de fragmentos de código / Uso de IA
+### Citas de fragmentos de código / Uso de IA
 
-- La estructura del problema de lectores-escritores fue consultada en el material teórico de la cátedra y en *Operating Systems: Three Easy Pieces* (Arpaci-Dusseau).
-- Se utilizó IA (Claude) como asistente para completar este README a partir del enunciado del TP.
+- La estructura del problema de lectores-escritores fue consultada en el material teórico de la cátedra.
+
+- En lugar de enviar el descriptor de archivo (File Descriptor) del extremo de escritura del pipe como un argumento por línea de comandos (lo cual expone la implementación interna y acopla los procesos), el proceso Máster realiza una redirección antes de ejecutar la llamada execv. La transición hacia este modelo de comunicación fue el resultado de una sesión de revisión de código asistida por Inteligencia Artificial (Gemini). La justificación arquitectónica detrás de este cambio se basó en el siguiente concepto analizado durante el desarrollo: "El uso de dup2 no es una forma de pasar el parámetro, sino de estandarizar la salida. Al hacer dup2(pipe_escritura, 1), se desconecta lógicamente el flujo hacia la terminal y se conecta, en su lugar, el flujo hacia el Pipe del Máster. Esto hace que el jugador no necesite saber por qué número de pipe habla; simplemente escribe en su salida estándar." De esta manera, se garantiza la compatibilidad universal del binario del jugador con cualquier proceso maestro que respete el estándar de capturar la salida estándar (FD 1), tal como lo requiere el enunciado del proyecto.
+
+- durante el desarrollo se noto que que los jugadores con IDs mayores a 1 no eran reconocidos por la vista y no podían capturar celdas. Esto ocurrió porque en procesadores ARM (a diferencia de x86), el tipo char es unsigned por defecto. Al guardar un ID negativo (ej. -1), se generaba un underflow guardando el valor 255. La solución fue forzar el casteo explícito a signed char al momento de leer el tablero tanto en master.c como en jugador.c y vista.c, garantizando la portabilidad del código en cualquier hardware.
+
+

@@ -30,7 +30,7 @@ sem_post(&sync->mutexWriter);
 
 static int begin_read(Sync *sync)
 {
-    // 1. primero pasamos por mutexWriter
+    // 1. Primero pasamos por mutexWriter
     // esto hace de molinete: no deja que sigan entrando lectores para siempre
     // si el master quiere escribir, con esto evitamos que se muera de hambre
     if (sem_wait(&sync->mutexWriter) == -1) {
@@ -38,7 +38,7 @@ static int begin_read(Sync *sync)
         return -1;
     }
 
-    // 2. ahora tomamos mutexReaders
+    // 2. Ahora tomamos mutexReaders
     // este protege solamente playersReading
     // o sea: no protege el tablero, protege el contador de lectores
     if (sem_wait(&sync->mutexReaders) == -1) {
@@ -47,10 +47,10 @@ static int begin_read(Sync *sync)
         return -1;
     }
 
-    // 3. nos anotamos como lector activo
+    // 3. Nos anotamos como lector activo
     sync->playersReading++;
 
-    // 4. si somos el primer lector, cerramos la puerta al escritor
+    // 4. Si somos el primer lector, cerramos la puerta al escritor
     if (sync->playersReading == 1) {
         if (sem_wait(&sync->mutexStatus) == -1) {
             perror("Error en sem_wait de mutexStatus");
@@ -61,19 +61,19 @@ static int begin_read(Sync *sync)
         }
     }
 
-    // 5. ya terminamos de tocar playersReading, soltamos mutexReaders
+    // 5. Ya terminamos de tocar playersReading, soltamos mutexReaders
     if (sem_post(&sync->mutexReaders) == -1) {
         perror("Error en sem_post de mutexReaders");
         return -1;
     }
 
-    // 6. soltamos mutexWriter
+    // 6. Soltamos mutexWriter
     if (sem_post(&sync->mutexWriter) == -1) {
         perror("Error en sem_post de mutexWriter");
         return -1;
     }
 
-    // 7. desde aca ya podemos leer el estado compartido
+    // 7. Desde aca ya podemos leer el estado compartido
     return 0;
 }
 
@@ -92,16 +92,16 @@ sem_post(&sync->mutexReaders);
 */
 static int end_read(Sync *sync)
 {
-    // 1. volvemos a tomar mutexReaders porque vamos a tocar playersReading
+    // 1. Volvemos a tomar mutexReaders porque vamos a tocar playersReading
     if (sem_wait(&sync->mutexReaders) == -1) {
         perror("Error en sem_wait de mutexReaders");
         return -1;
     }
 
-    // 2. dejamos de contarnos como lector activo
+    // 2. Dejamos de contarnos como lector activo
     sync->playersReading--;
 
-    // 3. si eramos el ultimo lector, reabrimos la puerta al escritor
+    // 3. Si eramos el ultimo lector, reabrimos la puerta al escritor
     if (sync->playersReading == 0) {
         if (sem_post(&sync->mutexStatus) == -1) {
             perror("Error en sem_post de mutexStatus");
@@ -110,7 +110,7 @@ static int end_read(Sync *sync)
         }
     }
 
-    // 4. ya terminamos con el contador, soltamos mutexReaders
+    // 4. Ya terminamos con el contador, soltamos mutexReaders
     if (sem_post(&sync->mutexReaders) == -1) {
         perror("Error en sem_post de mutexReaders");
         return -1;
@@ -130,7 +130,7 @@ int main(int argc, char *argv[])
     int pipe_fd = 1;
 
     int turn = 0; // Contador de turnos
-    srand(time(NULL) ^ getpid()); // Semilla única por jugador usando su PID
+    srand(time(NULL) ^ getpid()); // Semilla unica por jugador usando su PID
 
     // Obtengo file descriptor de /game_state
     int fd_state = shm_open("/game_state", O_RDONLY, 0);
@@ -155,9 +155,10 @@ int main(int argc, char *argv[])
         close(pipe_fd);
         return 1;
     }
-    // Guardo el tamaño real de la /game_state
+    
+    // Tamaño real de la /game_state
     size_t state_size = (size_t)state_info.st_size;
-    // Guardo el puntero a la memoria compartida en state
+    // Puntero a la memoria compartida en state
     GameState *state = mmap(NULL, state_size, PROT_READ, MAP_SHARED, fd_state, 0);
     if (state == MAP_FAILED) {
         perror("Error mapeando /game_state");
@@ -167,7 +168,7 @@ int main(int argc, char *argv[])
     }
     close(fd_state);
 
-    // Obtengo file descriptor de /game_sync
+    // File descriptor de /game_sync
     int fd_sync = shm_open("/game_sync", O_RDWR, 0);
     if (fd_sync == -1) {
         perror("Error abriendo /game_sync");
@@ -179,7 +180,7 @@ int main(int argc, char *argv[])
     // por lo tanto, sync_size es el tamaño de la estructura Sync + el tamaño de board[]
     size_t sync_size = sizeof(Sync);
  
-    // Guardamos el puntero a la memoria compartida en sync
+    // Puntero a la memoria compartida en sync
     Sync *sync = mmap(NULL, sync_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_sync, 0);
     if (sync == MAP_FAILED) {
         perror("Error mapeando /game_sync");
@@ -190,7 +191,7 @@ int main(int argc, char *argv[])
     }
     close(fd_sync);
 
-    // 3. Buscar mi propio índice usando mi PID
+    // Busca su propio indice usando mi PID
     pid_t mi_pid = getpid();
     int player_index = -1;
     
@@ -206,7 +207,7 @@ int main(int argc, char *argv[])
     end_read(sync);
 
     if (player_index == -1) {
-        fprintf(stderr, "Error: No encontré mi PID (%d) en el GameState.\n", mi_pid);
+        fprintf(stderr, "Error: No encontre mi PID (%d) en el GameState.\n", mi_pid);
         munmap(sync, sync_size);
         munmap(state, state_size);
         return 1;
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
         MoveRequest request;
         bool finished;
 
-        // el jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
+        // El jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
         if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
             perror("Error en sem_wait de allowed_Mov");
             munmap(sync, sync_size);
@@ -234,7 +235,7 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // entramos como lector para mirar el estado sin pisarnos con el master
+        // Entramos como lector para mirar el estado sin pisarnos con el master
         if (begin_read(sync) == -1) {
             munmap(sync, sync_size);
             munmap(state, state_size);
@@ -244,7 +245,7 @@ int main(int argc, char *argv[])
 
         finished = state->finished;
 
-        // --- DETECCIÓN DE ENCIERRO ---
+        // --- DETECCION DE ENCIERRO ---
         bool atrapado = true;
         int px = state->players[player_index].x;
         int py = state->players[player_index].y;
@@ -257,7 +258,7 @@ int main(int argc, char *argv[])
                 int nx = px + dx;
                 int ny = py + dy;
                 
-                // Si la celda está dentro del tablero y tiene una recompensa (> 0), hay salida
+                // Si la celda esta dentro del tablero y tiene una recompensa (> 0), hay salida
                 if (nx >= 0 && nx < state->width && ny >= 0 && ny < state->height) {
                     signed char cell_value = (signed char)state->board[ny * state->width + nx];
                     if (cell_value > 0) {
@@ -269,7 +270,7 @@ int main(int argc, char *argv[])
             if (!atrapado) break;
         }
 
-        // salimos del protocolo lector cuando terminamos de mirar el estado
+        // Salimos del protocolo lector cuando terminamos de mirar el estado
         if (end_read(sync) == -1) {
             munmap(sync, sync_size);
             munmap(state, state_size);
@@ -277,7 +278,7 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // si el master ya marco fin de juego, salimos sin mandar un movimiento extra
+        // Si el master ya marco fin de juego, salimos sin mandar un movimiento extra
         if (finished) {
             break;
         }
@@ -291,7 +292,7 @@ int main(int argc, char *argv[])
         
         turn++; // Incrementamos el turno para el algoritmo fijo
 
-        // write manda los bytes del struct por el pipe de este jugador hacia el master
+        // Write manda los bytes del struct por el pipe de este jugador hacia el master
         if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {
             perror("Error enviando movimiento");
             munmap(sync, sync_size);
