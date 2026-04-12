@@ -26,23 +26,32 @@ static void print_state(const GameState *state)
     // DIBUJO DEL TABLERO //
     printf("\n--- TABLERO ---\n");
     
-    // Recorremos fila por fila (y)
     for (int y = 0; y < state->height; y++) {
-        // Dentro de cada fila, recorremos columna por columna (x)
         for (int x = 0; x < state->width; x++) {
             
-            // Calculamos la posición exacta en el arreglo unidimensional
-            char cell_value = state->board[y * state->width + x];
+            signed char cell_value = state->board[y * state->width + x];
             
-            if (cell_value == 0) {
-                printf(" . "); // Celda vacía
-            } else if (cell_value >= 1 && cell_value <= 9) {
-                printf(" %d ", cell_value); // Es un jugador
-            } else {
-                printf(" %c ", cell_value); // Es una recompensa 
+            if (cell_value >= 1 && cell_value <= 9) {
+                // Recompensa
+                printf(".%d ", cell_value); 
+            } 
+            else if (cell_value <= 0 && cell_value >= -8) {
+                // Celda capturada (Cuerpo o Cabeza)
+                int index_jugador = -cell_value;
+                
+                // Revisamos si esta celda (x, y) es exactamente donde está el jugador AHORA
+                if (state->players[index_jugador].x == x && state->players[index_jugador].y == y) {
+                    // Es la CABEZA del jugador (le ponemos corchetes o lo marcamos diferente)
+                    printf("[%d]", index_jugador + 1);
+                } else {
+                    // Es el CUERPO / RASTRO (dejamos la J)
+                    printf("J%d ", index_jugador + 1);
+                }
+            } 
+            else {
+                printf(" ? ");
             }
         }
-        // Al terminar una fila entera, metemos un salto de línea
         printf("\n");
     }
     printf("------------\n");
@@ -52,14 +61,16 @@ static void print_state(const GameState *state)
 
 int main(int argc, char *argv[])
 {
-    (void)argc;
-    (void)argv;
+    if (argc != 3) {
+        fprintf(stderr, "Uso: %s <width> <height>\n", argv[0]);
+        return 1;
+    }
 
     // la vista no recibe argumentos utiles por linea de comandos
     // todo lo que necesita lo va a buscar sola en shared memory usando los nombres fijos
 
     // primero abrimos /game_state, que es donde esta el estado compartido del juego
-    int fd_state = shm_open("/game_state", O_RDWR, 0);
+    int fd_state = shm_open("/game_state", O_RDONLY, 0);
     if (fd_state == -1) {
         perror("Error abriendo /game_state");
         return 1;
@@ -77,7 +88,7 @@ int main(int argc, char *argv[])
     size_t state_size = (size_t)state_info.st_size;
 
     // recien ahora mapeamos esa memoria al proceso vista para obtener un puntero usable
-    GameState *state = mmap(NULL, state_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_state, 0);
+    GameState *state = mmap(NULL, state_size, PROT_READ, MAP_SHARED, fd_state, 0);
     if (state == MAP_FAILED) {
         perror("Error mapeando /game_state");
         close(fd_state);

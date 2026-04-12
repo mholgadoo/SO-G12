@@ -19,11 +19,6 @@ static MoveDirection fixed_behavior(int turn) {
     return secuencia[turn % 4];
 }
 
-// Funcion util para el radar 
-static bool is_reward(char c) {
-    return (c == '&' || c == '@' || c == '%' || c == '#' || c == '$');
-}
-
 /*
 logica base de begin_read, sin los if de validacion:
 
@@ -132,20 +127,22 @@ static int end_read(Sync *sync)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4) {
+    if (argc != 3) {
         fprintf(stderr, "Uso: %s <indice_jugador> <pipe_fd>\n", argv[0]);
         return 1;
     }
 
-    int player_index = atoi(argv[1]);
-    int pipe_fd = atoi(argv[2]);
-    char *behavior = argv[3];
+    // 2. El pipe siempre es el FD 1 (stdout) 
+    int pipe_fd = 1;
+
+    // Alternamos: pares son random, impares son fijos
+    char *behavior = "random"; 
 
     int turn = 0; // Agregamos el contador de turnos
     srand(time(NULL) ^ getpid()); // Semilla única por jugador usando su PID
 
     // Obtengo file descriptor de /game_state
-    int fd_state = shm_open("/game_state", O_RDWR, 0);
+    int fd_state = shm_open("/game_state", O_RDONLY, 0);
     if (fd_state == -1) {
         perror("Error abriendo /game_state");
         close(pipe_fd);
@@ -170,7 +167,7 @@ int main(int argc, char *argv[])
     // Guardo el tamaño real de la /game_state
     size_t state_size = (size_t)state_info.st_size;
     // Guardo el puntero a la memoria compartida en state
-    GameState *state = mmap(NULL, state_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_state, 0);
+    GameState *state = mmap(NULL, state_size, PROT_READ, MAP_SHARED, fd_state, 0);
     if (state == MAP_FAILED) {
         perror("Error mapeando /game_state");
         close(fd_state);
@@ -191,7 +188,7 @@ int main(int argc, char *argv[])
     // por lo tanto, sync_size es el tamaño de la estructura Sync + el tamaño de board[]
     size_t sync_size = sizeof(Sync);
  
-    // Guardo el puntero a la memoria compartida en sync
+    // Guardamos el puntero a la memoria compartida en sync
     Sync *sync = mmap(NULL, sync_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_sync, 0);
     if (sync == MAP_FAILED) {
         perror("Error mapeando /game_sync");
@@ -202,6 +199,28 @@ int main(int argc, char *argv[])
     }
     close(fd_sync);
 
+    // 3. Buscar mi propio índice usando mi PID
+    pid_t mi_pid = getpid();
+    int player_index = -1;
+    
+    if (begin_read(sync) == -1) return 1;
+
+    for (int i = 0; i < state->numPlayers; i++) {
+        if (state->players[i].pid == mi_pid) {
+            player_index = i;
+            break;
+        }
+    }
+
+    end_read(sync);
+
+    if (player_index == -1) {
+        fprintf(stderr, "Error: No encontré mi PID (%d) en el GameState.\n", mi_pid);
+        munmap(sync, sync_size);
+        munmap(state, state_size);
+        return 1;
+    }
+
     if (player_index < 0 || player_index >= state->numPlayers) {
         fprintf(stderr, "Error: indice de jugador fuera de rango.\n");
         munmap(sync, sync_size);
@@ -210,10 +229,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    
     while (true) {
         MoveRequest request;
         bool finished;
-        int radar = -1;
 
         // el jugador espera aca hasta que el master le diga "ya procese el anterior, manda otro"
         if (sem_wait(&sync->allowed_Mov[player_index]) == -1) {
@@ -234,27 +253,29 @@ int main(int argc, char *argv[])
 
         finished = state->finished;
 
-        // Si el juego sigue, prendemos el radar
-        if (!finished) {
-            unsigned short mi_x = state->players[player_index].x;
-            unsigned short mi_y = state->players[player_index].y;
-            unsigned short w = state->width;
-            unsigned short h = state->height;
+        // --- DETECCIÓN DE ENCIERRO ---
+        bool atrapado = true;
+        int px = state->players[player_index].x;
+        int py = state->players[player_index].y;
 
-            // RADAR: Miramos las 4 celdas adyacentes.
-            // OJO: Primero verificamos (mi_x + 1 < w) para no salirnos del tablero
-            if (mi_x + 1 < w && is_reward(state->board[mi_y * w + (mi_x + 1)])) {
-                radar = MOVE_RIGHT;
-            } 
-            else if (mi_x > 0 && is_reward(state->board[mi_y * w + (mi_x - 1)])) {
-                radar = MOVE_LEFT;
-            } 
-            else if (mi_y + 1 < h && is_reward(state->board[(mi_y + 1) * w + mi_x])) {
-                radar = MOVE_DOWN;
-            } 
-            else if (mi_y > 0 && is_reward(state->board[(mi_y - 1) * w + mi_x])) {
-                radar = MOVE_UP;
+        // Revisamos las celdas adyacentes (un cuadro de 3x3 alrededor del jugador)
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue; // No nos evaluamos a nosotros mismos
+                
+                int nx = px + dx;
+                int ny = py + dy;
+                
+                // Si la celda está dentro del tablero y tiene una recompensa (> 0), hay salida
+                if (nx >= 0 && nx < state->width && ny >= 0 && ny < state->height) {
+                    signed char cell_value = (signed char)state->board[ny * state->width + nx];
+                    if (cell_value > 0) {
+                        atrapado = false; 
+                        break; 
+                    }
+                }
             }
+            if (!atrapado) break;
         }
 
         // salimos del protocolo lector cuando terminamos de mirar el estado
@@ -270,14 +291,12 @@ int main(int argc, char *argv[])
             break;
         }
 
-        // por ahora mandamos siempre derecha solo para probar
-        //request.direction = MOVE_RIGHT;
+        // Si estamos atrapados, nos rendimos cortando el ciclo
+        if (atrapado) {
+            break; 
+        }
         
-        // Analizamos si el radar detecto una recompensa 
-        if (radar != -1) {
-            request.direction = (MoveDirection)radar;
-        } // Sino usamos el comportamiento que le toco al jugador
-        else if (strcmp(behavior, "random") == 0) {
+        if (strcmp(behavior, "random") == 0) {
             request.direction = random_behavior();
         } else {
             // Asumimos que si no es random, es "fijo"

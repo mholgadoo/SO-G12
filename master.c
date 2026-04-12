@@ -22,12 +22,14 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
 
     bool dentro = (new_x >= 0 && new_x < (int)state->width && new_y >= 0 && new_y < (int)state->height);
     // Leemos qué hay en la celda destino
-    char cell_dest = 0;
+    signed char cell_dest = 0;
     if (dentro) {
-        cell_dest = state->board[new_y * state->width + new_x];
+        cell_dest = (signed char)state->board[new_y * state->width + new_x];
     }
-    // Una celda es "pisable" si está libre (0) o si tiene una recompensa (no es un jugador del 1 al 9)
-    bool celda_libre = dentro && (cell_dest < 1 || cell_dest > 9);
+
+    // Una celda es libre SÓLO si tiene una recompensa (valores del 1 al 9).
+    // Si es <= 0, es una celda capturada por un jugador.
+    bool celda_libre = dentro && (cell_dest >= 1 && cell_dest <= 9);
 
     // FIX race condition: antes solo haciamos sem_wait(mutexStatus) directo,
     // pero eso esta incompleto. El protocolo correcto del escritor es:
@@ -45,22 +47,16 @@ static void aplicar_movimiento(GameState *state, Sync *sync, int player_index, M
         return;
     }
 
-    // Si corresponde sumamos el puntaje de la recompensa
     if (dentro && celda_libre) {
-        if (cell_dest != 0) {
-            switch(cell_dest) {
-                case '&': p->score += 1; break;
-                case '@': p->score += 3; break;
-                case '%': p->score += 5; break;
-                case '#': p->score += 7; break;
-                case '$': p->score += 9; break;
-            }
-        }
+        // La recompensa es un número del 1 al 9, se suma directamente al score del jugador
+        p->score += cell_dest;
 
-        state->board[p->y * state->width + p->x] = 0; // Vaciamos celda vieja
         p->x = (unsigned short)new_x;
         p->y = (unsigned short)new_y;
-        state->board[new_y * state->width + new_x] = (char)(player_index + 1); // Llenamos nueva
+        
+        // Marcamos la nueva celda con el ID negativo del jugador (0, -1, -2...)
+        state->board[new_y * state->width + new_x] = (char)(-player_index); 
+        
         p->valid_mov++;
     } else {
         p->invalid_mov++;
@@ -207,6 +203,16 @@ int main(int argc, char *argv[]) {
     // Limpiamos el array de jugadores
     memset(state->players, 0, sizeof(state->players));
 
+    // Sembrado de recompensas  
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            // rand() % 9 genera de 0 a 8. Le sumamos 1 para tener del 1 al 9.
+            char recompensa = (char)((rand() % 9) + 1);
+            
+            state->board[y * width + x] = recompensa;
+        }
+    }
+
     // Inicializamos los jugadores
     for (int i = 0; i < num_players; i++) {
         Player *player = &state->players[i];
@@ -237,33 +243,15 @@ int main(int argc, char *argv[]) {
         do {
             rand_x = (unsigned short)(rand() % width);
             rand_y = (unsigned short)(rand() % height);
-        } while (state->board[rand_y * state->width + rand_x] != 0);
+        } while (state->board[rand_y * state->width + rand_x] <= 0);
 
         player->x = rand_x;
         player->y = rand_y;
-        // Marcamos la celda como ocupada (1, 2 o 3...)
-        state->board[player->y * state->width + player->x] = (char)(i + 1);
+        
+        state->board[player->y * state->width + player->x] = (char)(-i);
 
         player->pid = 0;
         player->blocked = false;
-    }
-
-    // ### SEMBRADO DE RECOMPENSAS ### // 
-    char tipos_recompensas[] = {'&', '@', '%', '#', '$'};
-    int cantidad_por_tipo = 10; // Vamos a poner 10 de cada una (50 en total)
-
-    for (int r = 0; r < 5; r++) {
-        for (int k = 0; k < cantidad_por_tipo; k++) {
-            unsigned short rand_x, rand_y;
-            // Buscamos una celda que esté completamente vacía (0)
-            do {
-                rand_x = (unsigned short)(rand() % width);
-                rand_y = (unsigned short)(rand() % height);
-            } while (state->board[rand_y * state->width + rand_x] != 0);
-
-            // Plantamos la recompensa
-            state->board[rand_y * state->width + rand_x] = tipos_recompensas[r];
-        }
     }
 
     // ### INICIALIZACIÓN DE SEMÁFOROS ### //
@@ -325,65 +313,78 @@ int main(int argc, char *argv[]) {
             perror("Error creando proceso vista");
             exit(EXIT_FAILURE);
         }
-        // Proceso hijo: como la vista no es un jugador, no necesitamos los pipes -> los cerramos
+
+        // Proceso hijo: la vista no es un jugador, no necesitamos los pipes
         if (pid == 0) {
+            // Cerramos todos los pipes en el hijo
             for (int i = 0; i < num_players; i++) {
                 close(pipes[i][0]);
                 close(pipes[i][1]);
             }
 
-            // En execv armamos manualmente el argv del nuevo programa.
-            // char *args[] = { arg0, arg1, arg2, NULL };
-            // execv(ruta, args);
-            // "ruta" es el ejecutable a cargar.
-            // args[0] pasa a ser argv[0] del nuevo programa.
-            // El NULL final marca dónde termina el arreglo de argumentos.
-            char *view_argv[] = { view_path, NULL };
+            // La vista recibe ancho y alto como parámetros 
+            char width_str[12];
+            char height_str[12];
+            snprintf(width_str, sizeof(width_str), "%d", width);
+            snprintf(height_str, sizeof(height_str), "%d", height);
+
+            // Armamos el argv con: {ruta, ancho, alto, NULL}
+            char *view_argv[] = { view_path, width_str, height_str, NULL };
+            
             execv(view_path, view_argv);
 
-            // Si llego aca, hubo un error en execv
+            // Si llega aquí, hubo un error en execv
             perror("Error ejecutando vista");
             _exit(EXIT_FAILURE);
         }
-        // Proceso padre: sigue la ejecucion de master
+        // Proceso padre: continúa la ejecución del master
     }
 
     // ### CREACIÓN DE PROCESOS HIJOS JUGADORES ### // 
+    // Bloqueamos la lectura para que ningún jugador se busque a sí mismo
+    // hasta que el Master haya terminado de anotar TODOS los PIDs.
+    if (sem_wait(&sync->mutexStatus) == -1) {
+        perror("Error bloqueando estado inicial");
+        exit(EXIT_FAILURE);
+    }
+
     for (int i = 0; i < num_players; i++) {
         pid_t pid = fork();
         if (pid == -1) {
             perror("Error creando proceso jugador");
             exit(EXIT_FAILURE);
         }
+        
         // Proceso hijo: ejecuta el jugador
         if (pid == 0) {
-            char index_str[12];
-            char fd_str[12];
-            // Cerramos los pipes que no son del jugador actual
+            // 1. Cerramos los pipes que no son del jugador actual
             for (int j = 0; j < num_players; j++) {
-                // Cerramos todos los extremos de lectura porque un jugador no lee de ningun pipe
+                // Cerramos todos los extremos de lectura porque el jugador no lee del pipe
                 close(pipes[j][0]);
 
                 if (j != i) {
-                    // cerramos el pipe de escritura de todos los otros jugadores
+                    // Cerramos el pipe de escritura de todos los otros jugadores
                     close(pipes[j][1]);
                 }
             }
-        // Hasta aca dejamos al jugador con un solo FD util: pipes[i][1] (escritura)
             
-        
-            // Esas dos lineas convierten enteros a texto, porque execv solo pasa strings en argv
-            snprintf(index_str, sizeof(index_str), "%d", i);
-            snprintf(fd_str, sizeof(fd_str), "%d", pipes[i][1]);
+            // --- REDIRECCIÓN DE SALIDA ESTÁNDAR ---
+            // 2. Conectamos el pipe de escritura a la salida estándar (FD 1)
+            if (dup2(pipes[i][1], STDOUT_FILENO) == -1) {
+                perror("Error en dup2");
+                _exit(EXIT_FAILURE);
+            }
+            // Ya podemos cerrar el descriptor original porque dup2 hizo una copia en el FD 1
+            close(pipes[i][1]); 
 
-            //char *player_argv[] = { player_paths[i], index_str, fd_str, NULL };
-            //execv(player_paths[i], player_argv);
+            // 3. Preparamos los argumentos
+            char width_str[12];
+            char height_str[12];
+            snprintf(width_str, sizeof(width_str), "%d", width);
+            snprintf(height_str, sizeof(height_str), "%d", height);
 
-            // Alternamos: pares son random, impares son fijos
-            char *behavior = (i % 2 == 0) ? "random" : "fijo"; 
+            char *player_argv[] = { player_paths[i], width_str, height_str, NULL };
             
-            // Ahora sí pasamos el argumento "algo" al proceso jugador
-            char *player_argv[] = { player_paths[i], index_str, fd_str, behavior, NULL };
             execv(player_paths[i], player_argv);
 
             // Si llego aca, hubo un error en execv
@@ -392,7 +393,11 @@ int main(int argc, char *argv[]) {
         } 
         // Proceso padre: sigue la ejecucion de master
         state->players[i].pid = pid;
-        close(pipes[i][1]); 
+        close(pipes[i][1]); // El padre cierra su lado de escritura
+    }
+    // Ahora que todos los PIDs están escritos, dejamos que los jugadores lean.
+    if (sem_post(&sync->mutexStatus) == -1) {
+        perror("Error liberando estado inicial");
     }
 
     // si hay vista, hacemos una primera "foto" del estado inicial
@@ -414,6 +419,8 @@ int main(int argc, char *argv[]) {
     int round = 0;
     int winner_index = -1;
     bool all_dead = false;
+
+    time_t last_valid_move_time = time(NULL);
 
     while (!state->finished) {
         for (int offset = 0; offset < num_players; offset++) {
@@ -474,64 +481,103 @@ int main(int argc, char *argv[]) {
                     MoveRequest request;
                     ssize_t bytes_read = read(pipe_lectura, &request, sizeof(request));
 
+                    if (bytes_read == 0) {
+                        printf("El jugador %d (%s) detectó que no tiene salida y se rindió. Queda BLOQUEADO.\n", 
+                                player_index + 1, p->name);
+                        p->blocked = true;
+                        continue;
+                    }
+
                     if (bytes_read <= 0 || bytes_read != (ssize_t)sizeof(request)) {
                         fprintf(stderr, "El jugador %d envio datos corruptos o cerro el pipe. Bloqueado.\n", player_index);
                         p->blocked = true;
                         continue;
                     }
+                    unsigned int validos_antes = p->valid_mov;
 
                     // Aplicamos el movimiento real en el tablero
                     aplicar_movimiento(state, sync, player_index, (MoveDirection)request.direction);
+
+                    // Si el contador subió, fue un movimiento válido. Reseteamos el reloj de inactividad.
+                    if (p->valid_mov > validos_antes) {
+                        last_valid_move_time = time(NULL);
+                    }
 
                     // Avisamos a la vista que el tablero cambió
                     if (view_path != NULL) {
                         sem_post(&sync->canPrint);
                         sem_wait(&sync->completedPrint);
-                        usleep(delay * 5000); 
+                        // Solo para testear la progresion del juego
+                        //usleep(delay * 5000); 
                     }
                 }
             }
         }
         
-       // 5. EVALUACIÓN SILENCIOSA DE FIN DE JUEGO
+       // 5. EVALUACIÓN DE FIN DE JUEGO
         bool all_blocked = true;
         for (int i = 0; i < num_players; i++) {
-            if (state->players[i].score >= 30) {
-                winner_index = i;
-                state->finished = true;
-                break;
-            }
             if (!state->players[i].blocked) {
                 all_blocked = false;
+                break;
             }
         }
         
-        if (!state->finished && all_blocked) {
-            all_dead = true;
-            state->finished = true;
+        // Calculamos el tiempo de inactividad global
+        double segundos_inactivos = difftime(time(NULL), last_valid_move_time);
+        
+        // Si el juego todavía está corriendo, revisamos las condiciones de victoria/corte
+        if (!state->finished) {
+            if (all_blocked) {
+                all_dead = true;           // Usado más abajo para el printf de 💀
+                state->finished = true;
+            } 
+            else if (segundos_inactivos >= timeout) {
+                printf("\n⏳ TIEMPO AGOTADO: Han pasado %d segundos sin que nadie logre un movimiento válido.\n", timeout);
+                state->finished = true;
+                // No ponemos all_dead = true porque perdieron por tiempo, 
+                // no necesariamente porque todos estén encerrados.
+            }
         }
 
         round++;
     }
         
     // --- EL MOMENTO CLAVE ---
-    // Primero hacemos la última señal a la vista para que dibuje el tablero final.
-    // La Vista hará su última limpieza de pantalla aquí.
     if (view_path != NULL) {
         sem_post(&sync->canPrint);
         sem_wait(&sync->completedPrint);
     }
 
-    // AHORA QUE LA VISTA TERMINÓ Y YA NO LIMPIARÁ LA PANTALLA, EL MÁSTER IMPRIME
-    if (winner_index != -1) {
-        printf("\n🏆 ¡EL JUGADOR %d (%s) HA GANADO LA PARTIDA CON %u PUNTOS! 🏆\n", 
-               winner_index + 1, state->players[winner_index].name, state->players[winner_index].score);
-    } 
-    else if (all_dead) {
-        printf("\n💀 TODOS LOS JUGADORES ESTÁN BLOQUEADOS. FIN DEL JUEGO. 💀\n");
+    // Calculamos el ganador 
+    winner_index = 0;
+    for (int i = 1; i < num_players; i++) {
+        Player *current = &state->players[i];
+        Player *best = &state->players[winner_index];
+
+        if (current->score > best->score) {
+            winner_index = i;
+        } 
+        else if (current->score == best->score) {
+            // Desempate 1: Menor cantidad de movimientos válidos
+            if (current->valid_mov < best->valid_mov) {
+                winner_index = i;
+            } 
+            else if (current->valid_mov == best->valid_mov) {
+                // Desempate 2: Menor cantidad de movimientos inválidos
+                if (current->invalid_mov < best->invalid_mov) {
+                    winner_index = i;
+                }
+            }
+        }
     }
 
-    // Destrabamos a los jugadores restantes para que salgan
+    if (all_dead || state->finished) {
+        printf("\n🏆 ¡EL GANADOR ES EL JUGADOR %d (%s) CON %u PUNTOS! 🏆\n", 
+               winner_index + 1, state->players[winner_index].name, state->players[winner_index].score);
+    }
+
+    // Destrabamos a los jugadores restantes para que salgan del bucle
     for (int i = 0; i < num_players; i++) {
         sem_post(&sync->allowed_Mov[i]);
     }
@@ -539,21 +585,45 @@ int main(int argc, char *argv[]) {
     // ### CLEANUP: LIMPIEZA FINAL DE RECURSOS ### //
     printf("\nIniciando limpieza de recursos...\n");
 
-    // 1. Cerrar todos los pipes de lectura PRIMERO
-    // Esto asegura que si algún jugador intenta hacer un write() rezagado, 
-    // reciba una señal SIGPIPE del sistema y muera, evitando deadlocks.
     for (int i = 0; i < num_players; i++) {
         close(pipes[i][0]);
     }
-    printf("[-] Pipes cerrados.\n");
 
-    // 2. Esperar a que TODOS los hijos (Vista y Jugadores) mueran pacíficamente
-    // wait(NULL) suspende al master hasta que un hijo termina. 
-    // Cuando devuelve -1, significa que ya no quedan más hijos vivos.
-    while (wait(NULL) > 0);
-    printf("[-] Todos los procesos hijos finalizados (Zombies eliminados).\n");
+    // ESPERAR A LOS HIJOS E IMPRIMIR SU ESTADO 
+    int status;
+    pid_t child_pid;
+    while ((child_pid = wait(&status)) > 0) {
+        // Buscamos si el PID que murió pertenece a un jugador
+        int idx = -1;
+        for(int i = 0; i < num_players; i++) {
+            if (state->players[i].pid == child_pid) {
+                idx = i;
+                break;
+            }
+        }
 
-    // 3. Destruir los semáforos POSIX
+        if (WIFEXITED(status)) {
+            if (idx != -1) {
+                // Era un jugador
+                printf("Player %s (%d) exited (%d) with a score of %u / %u / %u\n", 
+                       state->players[idx].name, idx, WEXITSTATUS(status), 
+                       state->players[idx].score, state->players[idx].valid_mov, state->players[idx].invalid_mov);
+            } else {
+                // Era la vista
+                printf("View exited (%d)\n", WEXITSTATUS(status));
+            }
+        } 
+        else if (WIFSIGNALED(status)) {
+            if (idx != -1) {
+                printf("Player %s (%d) killed by signal %d\n", state->players[idx].name, idx, WTERMSIG(status));
+            } else {
+                printf("View killed by signal %d\n", WTERMSIG(status));
+            }
+        }
+    }
+    printf("[-] Todos los procesos hijos finalizados.\n");
+
+    // 3. Destruir semáforos, desmapear y borrar memoria
     sem_destroy(&sync->canPrint);
     sem_destroy(&sync->completedPrint);
     sem_destroy(&sync->mutexWriter);
@@ -562,19 +632,12 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_players; i++) {
         sem_destroy(&sync->allowed_Mov[i]);
     }
-    printf("[-] Semáforos destruidos.\n");
 
-    // 4. Desmapear la memoria virtual
     munmap(state, state_size);
     munmap(sync, sync_size);
-    printf("[-] Memoria desmapeada.\n");
-
-    // 5. Borrar los archivos de Memoria Compartida del Sistema Operativo
     shm_unlink("/game_state");
     shm_unlink("/game_sync");
-    printf("[-] Archivos de memoria compartida eliminados\n");
 
     printf("\n✅ JUEGO CERRADO CORRECTAMENTE. ¡HASTA LA PRÓXIMA!\n");
     return 0;
 }
-   
