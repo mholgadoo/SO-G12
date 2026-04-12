@@ -535,26 +535,23 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_players; i++) {
         sem_post(&sync->allowed_Mov[i]);
     }
-    
-    // aca destrabamos a todos porque cada uno puede haber quedado esperando su proximo turno
-    for (int i = 0; i < num_players; i++) {
-        sem_post(&sync->allowed_Mov[i]);
-    }
-
+   
     // ### CLEANUP: LIMPIEZA FINAL DE RECURSOS ### //
     printf("\nIniciando limpieza de recursos...\n");
 
-    // 1. Esperar a que TODOS los hijos (Vista y Jugadores) mueran pacíficamente
-    // wait(NULL) suspende al master hasta que un hijo termina. 
-    // Cuando devuelve -1, significa que ya no quedan más hijos vivos.
-    while (wait(NULL) > 0);
-    printf("[-] Todos los procesos hijos finalizados (Zombies eliminados).\n");
-
-    // 2. Cerrar todos los pipes de lectura que el Master seguía escuchando
+    // 1. Cerrar todos los pipes de lectura PRIMERO
+    // Esto asegura que si algún jugador intenta hacer un write() rezagado, 
+    // reciba una señal SIGPIPE del sistema y muera, evitando deadlocks.
     for (int i = 0; i < num_players; i++) {
         close(pipes[i][0]);
     }
     printf("[-] Pipes cerrados.\n");
+
+    // 2. Esperar a que TODOS los hijos (Vista y Jugadores) mueran pacíficamente
+    // wait(NULL) suspende al master hasta que un hijo termina. 
+    // Cuando devuelve -1, significa que ya no quedan más hijos vivos.
+    while (wait(NULL) > 0);
+    printf("[-] Todos los procesos hijos finalizados (Zombies eliminados).\n");
 
     // 3. Destruir los semáforos POSIX
     sem_destroy(&sync->canPrint);
