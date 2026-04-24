@@ -8,9 +8,62 @@
 #include "common.h"
 #include <time.h>
 
-// Comportamiento random 
-static MoveDirection random_behavior(void) {
-    return (MoveDirection)(rand() % 8);
+// Desplazamientos (dx, dy) para cada MoveDirection (0..7)
+static const int DIR_DX[8] = { 0, 1, 1, 1, 0,-1,-1,-1};
+static const int DIR_DY[8] = {-1,-1, 0, 1, 1, 1, 0,-1};
+
+/*
+ * Comportamiento inteligente del jugador.
+ *
+ * Fase 1 – codiciosa: se mueve hacia la celda adyacente con mayor puntaje.
+ * Fase 2 – sabotaje:  si no quedan recompensas cerca, se acerca al rival
+ *                     con más puntos para bloquearle sus celdas.
+ * Fase 3 – fallback:  cualquier celda válida (el master rechaza lo inválido).
+ *
+ * neighbor_val[d] = valor de la celda en la dirección d (-128 si fuera de tablero)
+ * rival_x, rival_y = posición del jugador rival con mayor score (-1 si solo hay uno)
+ */
+static MoveDirection smart_behavior(signed char neighbor_val[8],
+                                    int px, int py,
+                                    int rival_x, int rival_y)
+{
+    // --- Fase 1: codiciosa ---
+    int best_dir = -1;
+    int best_val = 0; // solo valores estrictamente positivos nos interesan
+    for (int d = 0; d < 8; d++) {
+        if (neighbor_val[d] > best_val) {
+            best_val = neighbor_val[d];
+            best_dir = d;
+        }
+    }
+    if (best_dir != -1)
+        return (MoveDirection)best_dir;
+
+    // --- Fase 2: sabotaje (acercarse al rival lider) ---
+    if (rival_x >= 0) {
+        int best_sabotage = -1;
+        int best_dist = 0x7fffffff;
+        for (int d = 0; d < 8; d++) {
+            if (neighbor_val[d] < -100) continue; // fuera del tablero, saltar
+            int nx = px + DIR_DX[d];
+            int ny = py + DIR_DY[d];
+            int dist = abs(nx - rival_x) + abs(ny - rival_y);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_sabotage = d;
+            }
+        }
+        if (best_sabotage != -1)
+            return (MoveDirection)best_sabotage;
+    }
+
+    // --- Fase 3: fallback — cualquier celda dentro del tablero ---
+    for (int d = 0; d < 8; d++) {
+        if (neighbor_val[d] > -100)  // -128 indica fuera del tablero
+            return (MoveDirection)d;
+    }
+
+    return (MoveDirection)(rand() % 8); // último recurso
 }
 
 /*
@@ -245,29 +298,36 @@ int main(int argc, char *argv[])
 
         finished = state->finished;
 
-        // --- DETECCION DE ENCIERRO ---
-        bool atrapado = true;
+        // --- LECTURA DE ESTADO PARA DECISION INTELIGENTE ---
         int px = state->players[player_index].x;
         int py = state->players[player_index].y;
 
-        // Revisamos las celdas adyacentes (un cuadro de 3x3 alrededor del jugador)
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                if (dx == 0 && dy == 0) continue; // No nos evaluamos a nosotros mismos
-                
-                int nx = px + dx;
-                int ny = py + dy;
-                
-                // Si la celda esta dentro del tablero y tiene una recompensa (> 0), hay salida
-                if (nx >= 0 && nx < state->width && ny >= 0 && ny < state->height) {
-                    signed char cell_value = (signed char)state->board[ny * state->width + nx];
-                    if (cell_value > 0) {
-                        atrapado = false; 
-                        break; 
-                    }
-                }
+        // Valor de cada celda vecina (-128 = fuera del tablero)
+        signed char neighbor_val[8];
+        bool atrapado = true;
+
+        for (int d = 0; d < 8; d++) {
+            int nx = px + DIR_DX[d];
+            int ny = py + DIR_DY[d];
+            if (nx >= 0 && nx < state->width && ny >= 0 && ny < state->height) {
+                neighbor_val[d] = (signed char)state->board[ny * state->width + nx];
+                if (neighbor_val[d] > 0)
+                    atrapado = false;
+            } else {
+                neighbor_val[d] = -128; // fuera del tablero
             }
-            if (!atrapado) break;
+        }
+
+        // Rival con mayor puntaje (para la fase de sabotaje)
+        int rival_x = -1, rival_y = -1;
+        unsigned int best_score = 0;
+        for (int i = 0; i < state->numPlayers; i++) {
+            if (i == player_index) continue;
+            if (!state->players[i].blocked && state->players[i].score >= best_score) {
+                best_score = state->players[i].score;
+                rival_x = state->players[i].x;
+                rival_y = state->players[i].y;
+            }
         }
 
         // Salimos del protocolo lector cuando terminamos de mirar el estado
@@ -288,9 +348,9 @@ int main(int argc, char *argv[])
             break; 
         }
         
-        request.direction = random_behavior();
-        
-        turn++; // Incrementamos el turno para el algoritmo fijo
+        request.direction = smart_behavior(neighbor_val, px, py, rival_x, rival_y);
+
+        turn++; // Incrementamos el turno
 
         // Write manda los bytes del struct por el pipe de este jugador hacia el master
         if (write(pipe_fd, &request, sizeof(request)) != (ssize_t)sizeof(request)) {
